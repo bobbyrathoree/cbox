@@ -21,13 +21,13 @@ var downCmd = &cobra.Command{
 	Long: `Stop all running services and remove containers.
 
 Examples:
-  cbox down         Stop all services
-  cbox down -v      Stop and remove volumes`,
+  cbox down            Stop all services
+  cbox down --volumes  Stop and remove volumes`,
 	RunE: runDown,
 }
 
 func init() {
-	downCmd.Flags().BoolVarP(&downVolumes, "volumes", "v", false, "remove volumes")
+	downCmd.Flags().BoolVar(&downVolumes, "volumes", false, "remove volumes")
 	downCmd.Flags().DurationVar(&downTimeout, "timeout", 10*time.Second, "shutdown timeout")
 }
 
