@@ -115,6 +115,17 @@ func (c *Console) Info(format string, args ...interface{}) {
 	fmt.Fprintf(c.out, "%s\n", msg)
 }
 
+// Dim prints a dimmed/muted message for secondary information.
+func (c *Console) Dim(format string, args ...interface{}) {
+	if c.quiet {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	msg := fmt.Sprintf(format, args...)
+	fmt.Fprintf(c.out, "%s\n", dim(msg))
+}
+
 // Debug prints a debug message (only in verbose mode).
 func (c *Console) Debug(format string, args ...interface{}) {
 	if !c.verbose {

@@ -138,6 +138,8 @@ func init() {
 	rootCmd.AddCommand(logsCmd)
 	rootCmd.AddCommand(execCmd)
 	rootCmd.AddCommand(doctorCmd)
+	rootCmd.AddCommand(topCmd)
+	rootCmd.AddCommand(cleanCmd)
 }
 
 // Execute runs the root command
