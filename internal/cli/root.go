@@ -95,6 +95,8 @@ func runDefault(cmd *cobra.Command, args []string) error {
 	case allBuilt:
 		// Images exist but not running - start them
 		console.Header("Starting %s...", cfg.Project.Name)
+		// Force detach mode when running via smart default
+		upDetach = true
 		return runUp(cmd, args)
 
 	default:
@@ -106,6 +108,8 @@ func runDefault(cmd *cobra.Command, args []string) error {
 			return err
 		}
 
+		// Force detach mode when running via smart default
+		upDetach = true
 		// Then start
 		return runUp(cmd, args)
 	}

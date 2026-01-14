@@ -494,3 +494,160 @@ services:
 	assert.Error(t, err, "should fail with missing env var")
 	assert.Contains(t, strings.ToLower(stderr+err.Error()), "not set")
 }
+
+// TestE2E_TopHelp tests that cbox top --help works.
+func TestE2E_TopHelp(t *testing.T) {
+	stdout, _, err := runCbox(t, ".", "top", "--help")
+	require.NoError(t, err)
+
+	assert.Contains(t, stdout, "Display live resource usage")
+	assert.Contains(t, stdout, "CPU")
+	assert.Contains(t, stdout, "memory")
+}
+
+// TestE2E_CleanHelp tests that cbox clean --help works.
+func TestE2E_CleanHelp(t *testing.T) {
+	stdout, _, err := runCbox(t, ".", "clean", "--help")
+	require.NoError(t, err)
+
+	assert.Contains(t, stdout, "Remove stopped containers")
+	assert.Contains(t, stdout, "--all")
+}
+
+// TestE2E_DashboardHelp tests that cbox dashboard --help works.
+func TestE2E_DashboardHelp(t *testing.T) {
+	stdout, _, err := runCbox(t, ".", "dashboard", "--help")
+	require.NoError(t, err)
+
+	assert.Contains(t, stdout, "interactive terminal UI")
+	assert.Contains(t, stdout, "q, Ctrl+C")
+}
+
+// TestE2E_DBHelp tests that cbox db --help works.
+func TestE2E_DBHelp(t *testing.T) {
+	stdout, _, err := runCbox(t, ".", "db", "--help")
+	require.NoError(t, err)
+
+	assert.Contains(t, stdout, "Database utilities")
+	assert.Contains(t, stdout, "shell")
+	assert.Contains(t, stdout, "snapshot")
+}
+
+// TestE2E_DBSnapshotHelp tests that cbox db snapshot --help works.
+func TestE2E_DBSnapshotHelp(t *testing.T) {
+	stdout, _, err := runCbox(t, ".", "db", "snapshot", "--help")
+	require.NoError(t, err)
+
+	assert.Contains(t, stdout, "Create, list, restore")
+	assert.Contains(t, stdout, "create")
+	assert.Contains(t, stdout, "list")
+	assert.Contains(t, stdout, "restore")
+	assert.Contains(t, stdout, "delete")
+}
+
+// TestE2E_TunnelHelp tests that cbox tunnel --help works.
+func TestE2E_TunnelHelp(t *testing.T) {
+	stdout, _, err := runCbox(t, ".", "tunnel", "--help")
+	require.NoError(t, err)
+
+	assert.Contains(t, stdout, "SSH reverse tunnel")
+	assert.Contains(t, stdout, "--host")
+	assert.Contains(t, stdout, "--port")
+}
+
+// TestE2E_CleanCommand tests the clean command on a project.
+func TestE2E_CleanCommand(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	projectDir := setupTestProject(t, "node-app")
+	projectName := filepath.Base(projectDir)
+
+	t.Cleanup(func() {
+		cleanupDocker(t, projectName)
+	})
+
+	// Init and build
+	_, _, err := runCbox(t, projectDir, "init")
+	require.NoError(t, err)
+
+	_, _, err = runCbox(t, projectDir, "build")
+	require.NoError(t, err)
+
+	// Start and stop to create stopped container
+	_, _, err = runCbox(t, projectDir, "up", "-d")
+	require.NoError(t, err)
+
+	err = waitForHealthy(t, "http://localhost:3000/health", 30*time.Second)
+	require.NoError(t, err)
+
+	_, _, err = runCbox(t, projectDir, "down")
+	require.NoError(t, err)
+
+	// Run clean
+	stdout, stderr, err := runCbox(t, projectDir, "clean")
+	require.NoError(t, err, "clean failed: stdout=%s stderr=%s", stdout, stderr)
+
+	assert.Contains(t, stdout, "Cleaning up")
+}
+
+// TestE2E_SmartDefault tests cbox with no args.
+func TestE2E_SmartDefault(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	projectDir := setupTestProject(t, "node-app")
+	projectName := filepath.Base(projectDir)
+
+	t.Cleanup(func() {
+		cleanupDocker(t, projectName)
+	})
+
+	// Init project
+	_, _, err := runCbox(t, projectDir, "init")
+	require.NoError(t, err)
+
+	// Build first
+	_, _, err = runCbox(t, projectDir, "build")
+	require.NoError(t, err)
+
+	// Running cbox with no args should start the service (since built but not running)
+	stdout, stderr, err := runCbox(t, projectDir)
+	require.NoError(t, err, "smart default failed: stdout=%s stderr=%s", stdout, stderr)
+
+	// Should have started
+	containerName := projectName + "_app"
+	assert.True(t, dockerContainerRunning(containerName), "container should be running")
+
+	// Cleanup
+	runCbox(t, projectDir, "down")
+}
+
+// TestE2E_DBSnapshotList tests db snapshot list on empty project.
+func TestE2E_DBSnapshotList(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	projectDir := setupTestProject(t, "node-app")
+
+	// Create minimal config with db service
+	cboxYaml := `version: "1"
+project:
+  name: testsnap
+services:
+  db:
+    image: postgres:15-alpine
+    port: 5432
+`
+	writeFile(t, projectDir, "cbox.yaml", cboxYaml)
+
+	// List should work (return no snapshots)
+	stdout, _, err := runCbox(t, projectDir, "db", "snapshot", "list")
+	require.NoError(t, err)
+
+	// Should show something (either "No snapshots" or "Snapshots for")
+	assert.True(t, len(stdout) > 0 || strings.Contains(stdout, "snapshot") || strings.Contains(stdout, "Snapshot"))
+}
