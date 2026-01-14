@@ -28,8 +28,8 @@ var (
 
 var rootCmd = &cobra.Command{
 	Use:   "cbox",
-	Short: "Bun for containers",
-	Long: `cbox - Bun for containers
+	Short: "Fast container workflow engine",
+	Long: `cbox - Fast container workflow engine
 
 A fast, opinionated container workflow engine that unifies building,
 running, and developing multi-service applications.
