@@ -1,0 +1,229 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/go-playground/validator/v10"
+	"gopkg.in/yaml.v3"
+)
+
+var validate = validator.New()
+
+// Load reads and parses a cbox.yaml file from the given path.
+func Load(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("config file not found: %s", path)
+		}
+		return nil, fmt.Errorf("failed to read config: %w", err)
+	}
+
+	return Parse(data, filepath.Dir(path))
+}
+
+// Parse parses cbox.yaml content and applies defaults.
+func Parse(data []byte, baseDir string) (*Config, error) {
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("invalid YAML: %w", err)
+	}
+
+	// Apply defaults
+	applyDefaults(&cfg, baseDir)
+
+	// Validate
+	if err := validate.Struct(cfg); err != nil {
+		return nil, formatValidationErrors(err)
+	}
+
+	// Additional validation
+	if err := validateConfig(&cfg); err != nil {
+		return nil, err
+	}
+
+	return &cfg, nil
+}
+
+// applyDefaults fills in default values for the configuration.
+func applyDefaults(cfg *Config, baseDir string) {
+	// Default project name to directory name
+	if cfg.Project.Name == "" {
+		cfg.Project.Name = filepath.Base(baseDir)
+		if cfg.Project.Name == "." || cfg.Project.Name == "/" {
+			cfg.Project.Name = "cbox-project"
+		}
+	}
+
+	// Apply service defaults
+	for name, svc := range cfg.Services {
+		applyServiceDefaults(&svc, name)
+		cfg.Services[name] = svc
+	}
+}
+
+// applyServiceDefaults fills in default values for a service.
+func applyServiceDefaults(svc *Service, name string) {
+	// Default healthcheck values
+	if svc.Healthcheck.Interval == 0 {
+		svc.Healthcheck.Interval = 5 * time.Second
+	}
+	if svc.Healthcheck.Timeout == 0 {
+		svc.Healthcheck.Timeout = 3 * time.Second
+	}
+	if svc.Healthcheck.Retries == 0 {
+		svc.Healthcheck.Retries = 3
+	}
+	if svc.Healthcheck.StartPeriod == 0 {
+		svc.Healthcheck.StartPeriod = 10 * time.Second
+	}
+
+	// Default dev sync to true for build services
+	if svc.IsBuildService() && !svc.Dev.Sync {
+		svc.Dev.Sync = true
+	}
+
+	// Default watch paths based on runtime
+	if len(svc.Dev.Watch.Paths) == 0 && svc.IsBuildService() {
+		switch svc.Runtime {
+		case "nodejs", "node":
+			svc.Dev.Watch.Paths = []string{"src/", "package.json"}
+			svc.Dev.Watch.Ignore = []string{"node_modules/", "*.test.ts", "*.test.js", "dist/", ".next/"}
+		case "go", "golang":
+			svc.Dev.Watch.Paths = []string{"."}
+			svc.Dev.Watch.Ignore = []string{"vendor/", "*_test.go"}
+		case "python":
+			svc.Dev.Watch.Paths = []string{"."}
+			svc.Dev.Watch.Ignore = []string{"__pycache__/", "*.pyc", ".venv/", "venv/"}
+		}
+	}
+}
+
+// validateConfig performs additional validation beyond struct tags.
+func validateConfig(cfg *Config) error {
+	for name, svc := range cfg.Services {
+		// Each service must have either path or image
+		if svc.Path == "" && svc.Image == "" {
+			return fmt.Errorf("service %q: must specify either 'path' (build) or 'image'", name)
+		}
+		if svc.Path != "" && svc.Image != "" {
+			return fmt.Errorf("service %q: cannot specify both 'path' and 'image'", name)
+		}
+
+		// Validate dependencies exist
+		for _, dep := range svc.DependsOn {
+			if _, exists := cfg.Services[dep]; !exists {
+				return fmt.Errorf("service %q: depends on unknown service %q", name, dep)
+			}
+		}
+
+		// Validate secret references
+		for _, secretRef := range svc.Secrets {
+			if _, exists := cfg.Secrets[secretRef]; !exists {
+				return fmt.Errorf("service %q: references unknown secret %q", name, secretRef)
+			}
+		}
+
+		// Validate volume references
+		for _, vol := range svc.Volumes {
+			// Skip bind mounts (start with ./ or /)
+			if vol[0] == '.' || vol[0] == '/' {
+				continue
+			}
+			// Extract volume name (before the colon)
+			volName := vol
+			if idx := findColon(vol); idx != -1 {
+				volName = vol[:idx]
+			}
+			if _, exists := cfg.Volumes[volName]; !exists {
+				return fmt.Errorf("service %q: references unknown volume %q", name, volName)
+			}
+		}
+	}
+
+	// Check for circular dependencies
+	if err := checkCircularDeps(cfg); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// checkCircularDeps detects circular dependencies between services.
+func checkCircularDeps(cfg *Config) error {
+	// Use DFS to detect cycles
+	visited := make(map[string]bool)
+	recStack := make(map[string]bool)
+
+	var dfs func(name string) error
+	dfs = func(name string) error {
+		visited[name] = true
+		recStack[name] = true
+
+		svc := cfg.Services[name]
+		for _, dep := range svc.DependsOn {
+			if !visited[dep] {
+				if err := dfs(dep); err != nil {
+					return err
+				}
+			} else if recStack[dep] {
+				return fmt.Errorf("circular dependency detected: %s -> %s", name, dep)
+			}
+		}
+
+		recStack[name] = false
+		return nil
+	}
+
+	for name := range cfg.Services {
+		if !visited[name] {
+			if err := dfs(name); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// findColon returns the index of the first colon, or -1 if not found.
+func findColon(s string) int {
+	for i, c := range s {
+		if c == ':' {
+			return i
+		}
+	}
+	return -1
+}
+
+// formatValidationErrors converts validator errors to a readable message.
+func formatValidationErrors(err error) error {
+	if validationErrs, ok := err.(validator.ValidationErrors); ok {
+		var msg string
+		for _, e := range validationErrs {
+			field := e.Field()
+			tag := e.Tag()
+			switch tag {
+			case "required":
+				msg += fmt.Sprintf("  - %s is required\n", field)
+			case "min":
+				msg += fmt.Sprintf("  - %s must have at least %s items\n", field, e.Param())
+			case "eq":
+				msg += fmt.Sprintf("  - %s must be '%s'\n", field, e.Param())
+			default:
+				msg += fmt.Sprintf("  - %s failed validation: %s\n", field, tag)
+			}
+		}
+		return fmt.Errorf("configuration validation failed:\n%s", msg)
+	}
+	return err
+}
+
+// Exists checks if a config file exists at the given path.
+func Exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
