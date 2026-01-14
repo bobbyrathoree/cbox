@@ -1,9 +1,14 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"strings"
 
+	"github.com/bobbyrathore/cbox/internal/orchestrator"
+	"github.com/bobbyrathore/cbox/internal/output"
+	"github.com/bobbyrathore/cbox/internal/runtime"
 	"github.com/spf13/cobra"
 )
 
@@ -36,6 +41,74 @@ Get started:
   cbox down       Stop all services`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
+	RunE:          runDefault,
+}
+
+// runDefault implements smart default behavior when cbox is run with no args
+func runDefault(cmd *cobra.Command, args []string) error {
+	ctx := context.Background()
+	console := output.NewWithOptions(verbose, quiet)
+
+	// Try to load config
+	cfg, err := loadConfig()
+	if err != nil {
+		// No config found - show help
+		return cmd.Help()
+	}
+
+	// Initialize runtime and orchestrator
+	docker := runtime.New(console)
+	orch := orchestrator.New(cfg, console)
+
+	// Check service states
+	statuses, _ := orch.Ps(ctx, true) // Include stopped containers
+
+	anyRunning := false
+	allBuilt := true
+
+	// Check running containers
+	for _, s := range statuses {
+		if strings.Contains(strings.ToLower(s.Status), "up") {
+			anyRunning = true
+		}
+	}
+
+	// Check if images exist for build services
+	for name, svc := range cfg.Services {
+		if svc.IsBuildService() {
+			imageName := fmt.Sprintf("%s_%s:latest", cfg.Project.Name, name)
+			if !docker.ImageExists(ctx, imageName) {
+				allBuilt = false
+				break
+			}
+		}
+	}
+
+	// Smart routing based on state
+	switch {
+	case anyRunning:
+		// Services running - show status
+		console.Info("Services are running:")
+		console.Newline()
+		return runPs(cmd, args)
+
+	case allBuilt:
+		// Images exist but not running - start them
+		console.Header("Starting %s...", cfg.Project.Name)
+		return runUp(cmd, args)
+
+	default:
+		// No images - build and start
+		console.Header("Building and starting %s...", cfg.Project.Name)
+
+		// Build first
+		if err := runBuild(cmd, args); err != nil {
+			return err
+		}
+
+		// Then start
+		return runUp(cmd, args)
+	}
 }
 
 var versionCmd = &cobra.Command{

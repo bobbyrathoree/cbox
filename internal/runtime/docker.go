@@ -426,6 +426,18 @@ func FindProcessOnPort(port int) (int, error) {
 	return 0, fmt.Errorf("could not parse PID")
 }
 
+// FindAvailablePort finds an available port starting from the preferred port.
+// It tries maxAttempts ports in sequence (preferred, preferred+1, etc.)
+func FindAvailablePort(preferred int, maxAttempts int) (int, error) {
+	for i := 0; i < maxAttempts; i++ {
+		port := preferred + i
+		if err := CheckPortAvailable(port); err == nil {
+			return port, nil
+		}
+	}
+	return 0, fmt.Errorf("no available port in range %d-%d", preferred, preferred+maxAttempts-1)
+}
+
 // ImageExists checks if an image exists locally.
 func (d *Docker) ImageExists(ctx context.Context, image string) bool {
 	cmd := exec.CommandContext(ctx, "docker", "image", "inspect", image)

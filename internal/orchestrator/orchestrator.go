@@ -102,16 +102,30 @@ func (o *Orchestrator) startServiceLevel(ctx context.Context, services []string,
 
 			svc := o.config.Services[serviceName]
 
-			// Check port availability
+			// Check port availability with auto-resolution
 			if svc.Port > 0 {
 				if err := runtime.CheckPortAvailable(svc.Port); err != nil {
+					// Try to find an alternative port
+					newPort, findErr := runtime.FindAvailablePort(svc.Port+1, 10)
+					if findErr != nil {
+						pid, _ := runtime.FindProcessOnPort(svc.Port)
+						if pid > 0 {
+							errCh <- fmt.Errorf("port %d in use by PID %d and no alternatives available", svc.Port, pid)
+						} else {
+							errCh <- fmt.Errorf("port %d is in use and no alternatives available", svc.Port)
+						}
+						return
+					}
+
+					// Found alternative port - warn user and use it
 					pid, _ := runtime.FindProcessOnPort(svc.Port)
 					if pid > 0 {
-						errCh <- fmt.Errorf("port %d in use by PID %d. Try: kill %d", svc.Port, pid, pid)
+						o.console.Warn("Port %d in use (PID %d). Using %d instead.", svc.Port, pid, newPort)
 					} else {
-						errCh <- fmt.Errorf("port %d is already in use", svc.Port)
+						o.console.Warn("Port %d in use. Using %d instead.", svc.Port, newPort)
 					}
-					return
+					svc.Port = newPort
+					o.config.Services[serviceName] = svc
 				}
 			}
 
