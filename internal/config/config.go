@@ -41,6 +41,9 @@ type Service struct {
 	DependsOn   []string          `yaml:"depends_on"`
 	Healthcheck HealthcheckConfig `yaml:"healthcheck"`
 
+	// Lifecycle hooks
+	Hooks HooksConfig `yaml:"hooks"`
+
 	// Environment
 	Env     map[string]string `yaml:"env"`
 	EnvFile string            `yaml:"env_file"`
@@ -48,6 +51,12 @@ type Service struct {
 
 	// Storage
 	Volumes []string `yaml:"volumes"` // volume_name:/path or ./host:/container
+}
+
+// HooksConfig defines lifecycle hooks for a service.
+type HooksConfig struct {
+	PostUp  string `yaml:"post-up"`  // Run after container starts and is healthy
+	PreDown string `yaml:"pre-down"` // Run before container stops
 }
 
 // BuildConfig contains build-time configuration.

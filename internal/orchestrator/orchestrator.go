@@ -207,6 +207,20 @@ func (o *Orchestrator) startServiceLevel(ctx context.Context, services []string,
 				}
 			}
 
+			// Run post-up hook if defined
+			if svc.Hooks.PostUp != "" {
+				o.console.Info("Running post-up hook for %s...", serviceName)
+				output, err := o.runtime.ContainerExecWithOutput(ctx, containerName, svc.Hooks.PostUp)
+				if err != nil {
+					errCh <- fmt.Errorf("post-up hook failed for %s: %w", serviceName, err)
+					return
+				}
+				if output != "" {
+					o.console.Debug("Hook output: %s", output)
+				}
+				o.console.Success("Post-up hook completed for %s", serviceName)
+			}
+
 			o.console.Success("Started %s", serviceName)
 
 		}(name)
@@ -237,6 +251,28 @@ func (o *Orchestrator) Down(ctx context.Context, opts DownOptions) error {
 
 	// Stop all containers
 	for _, c := range containers {
+		// Extract service name from container name
+		serviceName := c.Name
+		prefix := o.config.Project.Name + "_"
+		if len(serviceName) > len(prefix) && serviceName[:len(prefix)] == prefix {
+			serviceName = serviceName[len(prefix):]
+		}
+
+		// Run pre-down hook if defined
+		if svc, exists := o.config.Services[serviceName]; exists && svc.Hooks.PreDown != "" {
+			o.console.Info("Running pre-down hook for %s...", serviceName)
+			output, err := o.runtime.ContainerExecWithOutput(ctx, c.Name, svc.Hooks.PreDown)
+			if err != nil {
+				// Don't fail on pre-down hook errors, just warn
+				o.console.Warn("Pre-down hook failed for %s: %s", serviceName, err)
+			} else {
+				if output != "" {
+					o.console.Debug("Hook output: %s", output)
+				}
+				o.console.Success("Pre-down hook completed for %s", serviceName)
+			}
+		}
+
 		o.console.Debug("Stopping %s...", c.Name)
 		timeout := opts.Timeout
 		if timeout == 0 {

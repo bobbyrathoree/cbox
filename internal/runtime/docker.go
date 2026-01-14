@@ -293,6 +293,20 @@ func (d *Docker) ContainerExec(ctx context.Context, nameOrID string, cmd []strin
 	return execCmd.Run()
 }
 
+// ContainerExecWithOutput executes a command in a container and returns output.
+// This is used for lifecycle hooks.
+func (d *Docker) ContainerExecWithOutput(ctx context.Context, nameOrID string, command string) (string, error) {
+	d.console.Debug("Executing in %s: %s", nameOrID, command)
+
+	args := []string{"exec", nameOrID, "sh", "-c", command}
+	execCmd := exec.CommandContext(ctx, "docker", args...)
+	output, err := execCmd.CombinedOutput()
+	if err != nil {
+		return string(output), fmt.Errorf("exec failed: %w\nOutput: %s", err, string(output))
+	}
+	return string(output), nil
+}
+
 // ListContainers lists containers with the given labels.
 func (d *Docker) ListContainers(ctx context.Context, labels map[string]string, all bool) ([]Container, error) {
 	args := []string{"ps", "--format", "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"}

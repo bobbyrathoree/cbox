@@ -1057,3 +1057,140 @@ func TestE2E_Validate_NoConfig(t *testing.T) {
 	_, _, err := runCbox(t, projectDir, "validate")
 	assert.Error(t, err, "validate should fail when no config exists")
 }
+
+// TestE2E_Hooks_PostUp tests that post-up hooks run after container starts.
+func TestE2E_Hooks_PostUp(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	projectDir := setupTestProject(t, "node-app")
+	projectName := filepath.Base(projectDir)
+
+	t.Cleanup(func() {
+		cleanupDocker(t, projectName)
+	})
+
+	// Create cbox.yaml with post-up hook
+	cboxYaml := `version: "1"
+project:
+  name: ` + projectName + `
+services:
+  app:
+    path: .
+    runtime: nodejs
+    port: 3000
+    command: ["npm", "start"]
+    hooks:
+      post-up: "touch /tmp/hook-ran && echo 'Hook executed'"
+`
+	writeFile(t, projectDir, "cbox.yaml", cboxYaml)
+
+	// Build
+	_, _, err := runCbox(t, projectDir, "build")
+	require.NoError(t, err)
+
+	// Start (hook should run)
+	stdout, stderr, err := runCbox(t, projectDir, "up", "-d")
+	require.NoError(t, err, "up failed: stdout=%s stderr=%s", stdout, stderr)
+
+	// Verify hook ran by checking output contains "post-up hook"
+	assert.Contains(t, stdout, "post-up hook")
+
+	// Wait for healthy
+	err = waitForHealthy(t, "http://localhost:3000/health", 30*time.Second)
+	require.NoError(t, err)
+
+	// Verify file was created by hook
+	execStdout, _, err := runCbox(t, projectDir, "exec", "app", "--", "test", "-f", "/tmp/hook-ran")
+	require.NoError(t, err, "hook file should exist: %s", execStdout)
+
+	// Cleanup
+	runCbox(t, projectDir, "down")
+}
+
+// TestE2E_Hooks_PreDown tests that pre-down hooks run before container stops.
+func TestE2E_Hooks_PreDown(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	projectDir := setupTestProject(t, "node-app")
+	projectName := filepath.Base(projectDir)
+
+	t.Cleanup(func() {
+		cleanupDocker(t, projectName)
+	})
+
+	// Create cbox.yaml with pre-down hook
+	cboxYaml := `version: "1"
+project:
+  name: ` + projectName + `
+services:
+  app:
+    path: .
+    runtime: nodejs
+    port: 3000
+    command: ["npm", "start"]
+    hooks:
+      pre-down: "echo 'Cleanup running'"
+`
+	writeFile(t, projectDir, "cbox.yaml", cboxYaml)
+
+	// Build and start
+	_, _, err := runCbox(t, projectDir, "build")
+	require.NoError(t, err)
+
+	_, _, err = runCbox(t, projectDir, "up", "-d")
+	require.NoError(t, err)
+
+	err = waitForHealthy(t, "http://localhost:3000/health", 30*time.Second)
+	require.NoError(t, err)
+
+	// Stop (hook should run)
+	stdout, stderr, err := runCbox(t, projectDir, "down")
+	require.NoError(t, err, "down failed: stdout=%s stderr=%s", stdout, stderr)
+
+	// Verify hook ran by checking output
+	assert.Contains(t, stdout, "pre-down hook")
+}
+
+// TestE2E_Hooks_PostUpFailure tests that post-up hook failure stops the up process.
+func TestE2E_Hooks_PostUpFailure(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	projectDir := setupTestProject(t, "node-app")
+	projectName := filepath.Base(projectDir)
+
+	t.Cleanup(func() {
+		cleanupDocker(t, projectName)
+	})
+
+	// Create cbox.yaml with failing post-up hook
+	cboxYaml := `version: "1"
+project:
+  name: ` + projectName + `
+services:
+  app:
+    path: .
+    runtime: nodejs
+    port: 3000
+    command: ["npm", "start"]
+    hooks:
+      post-up: "exit 1"
+`
+	writeFile(t, projectDir, "cbox.yaml", cboxYaml)
+
+	// Build
+	_, _, err := runCbox(t, projectDir, "build")
+	require.NoError(t, err)
+
+	// Start (should fail due to hook)
+	_, _, err = runCbox(t, projectDir, "up", "-d")
+	assert.Error(t, err, "up should fail when post-up hook fails")
+
+	// Cleanup
+	runCbox(t, projectDir, "down")
+}
