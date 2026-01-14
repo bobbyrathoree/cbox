@@ -4,11 +4,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/go-playground/validator/v10"
 	"gopkg.in/yaml.v3"
 )
+
+// envVarPattern matches ${VAR} or ${VAR:-default} patterns.
+var envVarPattern = regexp.MustCompile(`\$\{([^}:]+)(?::-([^}]*))?\}`)
 
 var validate = validator.New()
 
@@ -30,6 +36,21 @@ func Parse(data []byte, baseDir string) (*Config, error) {
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("invalid YAML: %w", err)
+	}
+
+	// Substitute environment variables (${VAR} syntax)
+	if err := substituteEnvVars(&cfg); err != nil {
+		return nil, fmt.Errorf("env substitution failed: %w", err)
+	}
+
+	// Load .env files for services
+	if err := loadEnvFiles(&cfg, baseDir); err != nil {
+		return nil, fmt.Errorf("env file loading failed: %w", err)
+	}
+
+	// Resolve secrets
+	if err := resolveSecrets(&cfg, baseDir); err != nil {
+		return nil, fmt.Errorf("secret resolution failed: %w", err)
 	}
 
 	// Apply defaults
@@ -226,4 +247,198 @@ func formatValidationErrors(err error) error {
 func Exists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// substituteEnvVars replaces ${VAR} and ${VAR:-default} patterns in all string fields.
+func substituteEnvVars(cfg *Config) error {
+	return substituteEnvVarsInValue(reflect.ValueOf(cfg))
+}
+
+// substituteEnvVarsInValue recursively processes a reflect.Value for env substitution.
+func substituteEnvVarsInValue(v reflect.Value) error {
+	switch v.Kind() {
+	case reflect.Ptr:
+		if !v.IsNil() {
+			return substituteEnvVarsInValue(v.Elem())
+		}
+	case reflect.Struct:
+		for i := 0; i < v.NumField(); i++ {
+			if err := substituteEnvVarsInValue(v.Field(i)); err != nil {
+				return err
+			}
+		}
+	case reflect.Map:
+		for _, key := range v.MapKeys() {
+			val := v.MapIndex(key)
+			// For map values, we need special handling
+			if val.Kind() == reflect.String {
+				newVal, err := expandEnvString(val.String())
+				if err != nil {
+					return err
+				}
+				v.SetMapIndex(key, reflect.ValueOf(newVal))
+			} else if val.Kind() == reflect.Struct || val.Kind() == reflect.Ptr {
+				// For struct values in maps, we need to work with addressable copies
+				newVal := reflect.New(val.Type()).Elem()
+				newVal.Set(val)
+				if err := substituteEnvVarsInValue(newVal); err != nil {
+					return err
+				}
+				v.SetMapIndex(key, newVal)
+			}
+		}
+	case reflect.Slice:
+		for i := 0; i < v.Len(); i++ {
+			elem := v.Index(i)
+			if elem.Kind() == reflect.String && elem.CanSet() {
+				newVal, err := expandEnvString(elem.String())
+				if err != nil {
+					return err
+				}
+				elem.SetString(newVal)
+			} else {
+				if err := substituteEnvVarsInValue(elem); err != nil {
+					return err
+				}
+			}
+		}
+	case reflect.String:
+		if v.CanSet() {
+			newVal, err := expandEnvString(v.String())
+			if err != nil {
+				return err
+			}
+			v.SetString(newVal)
+		}
+	}
+	return nil
+}
+
+// expandEnvString replaces ${VAR} and ${VAR:-default} in a string.
+func expandEnvString(s string) (string, error) {
+	var lastErr error
+	result := envVarPattern.ReplaceAllStringFunc(s, func(match string) string {
+		submatches := envVarPattern.FindStringSubmatch(match)
+		if len(submatches) < 2 {
+			return match
+		}
+
+		varName := submatches[1]
+		defaultVal := ""
+		hasDefault := len(submatches) >= 3 && submatches[2] != ""
+		if hasDefault {
+			defaultVal = submatches[2]
+		}
+
+		value := os.Getenv(varName)
+		if value == "" {
+			if hasDefault {
+				return defaultVal
+			}
+			// Check if the variable exists but is empty vs not set at all
+			if _, exists := os.LookupEnv(varName); !exists {
+				lastErr = fmt.Errorf("environment variable %q is not set and has no default", varName)
+				return match
+			}
+		}
+		return value
+	})
+
+	return result, lastErr
+}
+
+// loadEnvFiles loads .env files specified in service configs.
+func loadEnvFiles(cfg *Config, baseDir string) error {
+	for name, svc := range cfg.Services {
+		if svc.EnvFile == "" {
+			continue
+		}
+
+		envPath := svc.EnvFile
+		if !filepath.IsAbs(envPath) {
+			envPath = filepath.Join(baseDir, envPath)
+		}
+
+		envVars, err := ParseEnvFile(envPath)
+		if err != nil {
+			return fmt.Errorf("service %q: %w", name, err)
+		}
+
+		// Initialize Env map if nil
+		if svc.Env == nil {
+			svc.Env = make(map[string]string)
+		}
+
+		// Merge env file values (explicit env values take precedence)
+		for k, v := range envVars {
+			if _, exists := svc.Env[k]; !exists {
+				svc.Env[k] = v
+			}
+		}
+
+		cfg.Services[name] = svc
+	}
+	return nil
+}
+
+// resolveSecrets resolves secret values and injects them into service environments.
+func resolveSecrets(cfg *Config, baseDir string) error {
+	// First, resolve all secret values
+	resolvedSecrets := make(map[string]string)
+
+	for name, secret := range cfg.Secrets {
+		var value string
+
+		if secret.Env != "" {
+			value = os.Getenv(secret.Env)
+			if value == "" {
+				if _, exists := os.LookupEnv(secret.Env); !exists {
+					return fmt.Errorf("secret %q: environment variable %q is not set", name, secret.Env)
+				}
+			}
+		} else if secret.File != "" {
+			filePath := secret.File
+			if !filepath.IsAbs(filePath) {
+				filePath = filepath.Join(baseDir, filePath)
+			}
+
+			data, err := os.ReadFile(filePath)
+			if err != nil {
+				return fmt.Errorf("secret %q: failed to read file %q: %w", name, secret.File, err)
+			}
+			value = strings.TrimSpace(string(data))
+		}
+
+		resolvedSecrets[name] = value
+	}
+
+	// Inject secrets into service environments
+	for svcName, svc := range cfg.Services {
+		if len(svc.Secrets) == 0 {
+			continue
+		}
+
+		if svc.Env == nil {
+			svc.Env = make(map[string]string)
+		}
+
+		for _, secretRef := range svc.Secrets {
+			value, exists := resolvedSecrets[secretRef]
+			if !exists {
+				// This should be caught by validation, but double-check
+				return fmt.Errorf("service %q: secret %q not found", svcName, secretRef)
+			}
+
+			// Inject secret as uppercase env var (SECRET_NAME -> SECRET_NAME)
+			envKey := strings.ToUpper(secretRef)
+			// Don't override explicit env values
+			if _, exists := svc.Env[envKey]; !exists {
+				svc.Env[envKey] = value
+			}
+		}
+
+		cfg.Services[svcName] = svc
+	}
+
+	return nil
 }

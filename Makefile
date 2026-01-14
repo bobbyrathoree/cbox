@@ -1,4 +1,4 @@
-.PHONY: build test lint clean install run dev
+.PHONY: build test test-e2e test-all lint clean install run dev
 
 # Build variables
 BINARY_NAME=cbox
@@ -26,6 +26,13 @@ test:
 test-coverage:
 	go test -v -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out -o coverage.html
+
+# Run e2e tests (requires Docker)
+test-e2e: build
+	go test -v -timeout 10m ./tests/e2e/...
+
+# Run all tests
+test-all: test test-e2e
 
 # Run linter
 lint:
