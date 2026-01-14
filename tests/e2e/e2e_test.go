@@ -1194,3 +1194,113 @@ services:
 	// Cleanup
 	runCbox(t, projectDir, "down")
 }
+
+// TestE2E_DiagnoseHelp tests that cbox diagnose --help works.
+func TestE2E_DiagnoseHelp(t *testing.T) {
+	stdout, _, err := runCbox(t, ".", "diagnose", "--help")
+	require.NoError(t, err)
+
+	assert.Contains(t, stdout, "diagnostics")
+	assert.Contains(t, stdout, "issues")
+	assert.Contains(t, stdout, "--json")
+}
+
+// TestE2E_Diagnose_Healthy tests diagnose on healthy services.
+func TestE2E_Diagnose_Healthy(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	projectDir := setupTestProject(t, "node-app")
+	projectName := filepath.Base(projectDir)
+
+	t.Cleanup(func() {
+		cleanupDocker(t, projectName)
+	})
+
+	// Init, build, and start
+	_, _, err := runCbox(t, projectDir, "init")
+	require.NoError(t, err)
+
+	_, _, err = runCbox(t, projectDir, "build")
+	require.NoError(t, err)
+
+	_, _, err = runCbox(t, projectDir, "up", "-d")
+	require.NoError(t, err)
+
+	err = waitForHealthy(t, "http://localhost:3000/health", 30*time.Second)
+	require.NoError(t, err)
+
+	// Run diagnose
+	stdout, stderr, err := runCbox(t, projectDir, "diagnose")
+	require.NoError(t, err, "diagnose failed: stdout=%s stderr=%s", stdout, stderr)
+
+	// Should show healthy
+	assert.Contains(t, stdout, "healthy")
+
+	// Cleanup
+	runCbox(t, projectDir, "down")
+}
+
+// TestE2E_Diagnose_JSON tests diagnose --json flag.
+func TestE2E_Diagnose_JSON(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	projectDir := setupTestProject(t, "node-app")
+	projectName := filepath.Base(projectDir)
+
+	t.Cleanup(func() {
+		cleanupDocker(t, projectName)
+	})
+
+	// Init, build, and start
+	_, _, err := runCbox(t, projectDir, "init")
+	require.NoError(t, err)
+
+	_, _, err = runCbox(t, projectDir, "build")
+	require.NoError(t, err)
+
+	_, _, err = runCbox(t, projectDir, "up", "-d")
+	require.NoError(t, err)
+
+	err = waitForHealthy(t, "http://localhost:3000/health", 30*time.Second)
+	require.NoError(t, err)
+
+	// Run diagnose with JSON output
+	stdout, stderr, err := runCbox(t, projectDir, "diagnose", "--json")
+	require.NoError(t, err, "diagnose --json failed: stdout=%s stderr=%s", stdout, stderr)
+
+	// Verify valid JSON
+	assert.Contains(t, stdout, "\"healthy\"")
+	assert.Contains(t, stdout, "\"issues\"")
+
+	// Cleanup
+	runCbox(t, projectDir, "down")
+}
+
+// TestE2E_Diagnose_NoServices tests diagnose when no services are running.
+func TestE2E_Diagnose_NoServices(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	projectDir := setupTestProject(t, "node-app")
+	projectName := filepath.Base(projectDir)
+
+	t.Cleanup(func() {
+		cleanupDocker(t, projectName)
+	})
+
+	// Init but don't start
+	_, _, err := runCbox(t, projectDir, "init")
+	require.NoError(t, err)
+
+	// Run diagnose
+	stdout, _, err := runCbox(t, projectDir, "diagnose")
+	require.NoError(t, err)
+
+	// Should show not running
+	assert.Contains(t, stdout, "Not running")
+}

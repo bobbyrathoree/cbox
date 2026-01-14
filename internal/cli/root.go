@@ -145,6 +145,7 @@ func init() {
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(waitCmd)
 	rootCmd.AddCommand(validateCmd)
+	rootCmd.AddCommand(diagnoseCmd)
 	rootCmd.AddCommand(doctorCmd)
 	rootCmd.AddCommand(topCmd)
 	rootCmd.AddCommand(cleanCmd)
