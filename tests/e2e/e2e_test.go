@@ -651,3 +651,216 @@ services:
 	// Should show something (either "No snapshots" or "Snapshots for")
 	assert.True(t, len(stdout) > 0 || strings.Contains(stdout, "snapshot") || strings.Contains(stdout, "Snapshot"))
 }
+
+// TestE2E_RunHelp tests that cbox run --help works.
+func TestE2E_RunHelp(t *testing.T) {
+	stdout, _, err := runCbox(t, ".", "run", "--help")
+	require.NoError(t, err)
+
+	assert.Contains(t, stdout, "one-off command")
+	assert.Contains(t, stdout, "service")
+}
+
+// TestE2E_RestartHelp tests that cbox restart --help works.
+func TestE2E_RestartHelp(t *testing.T) {
+	stdout, _, err := runCbox(t, ".", "restart", "--help")
+	require.NoError(t, err)
+
+	assert.Contains(t, stdout, "Restart")
+	assert.Contains(t, stdout, "timeout")
+}
+
+// TestE2E_Run_EchoCommand tests running a simple command.
+func TestE2E_Run_EchoCommand(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	projectDir := setupTestProject(t, "node-app")
+	projectName := filepath.Base(projectDir)
+
+	t.Cleanup(func() {
+		cleanupDocker(t, projectName)
+	})
+
+	// Init and build
+	_, _, err := runCbox(t, projectDir, "init")
+	require.NoError(t, err)
+
+	_, _, err = runCbox(t, projectDir, "build")
+	require.NoError(t, err)
+
+	// Start services to create network
+	_, _, err = runCbox(t, projectDir, "up", "-d")
+	require.NoError(t, err)
+
+	err = waitForHealthy(t, "http://localhost:3000/health", 30*time.Second)
+	require.NoError(t, err)
+
+	// Run echo command
+	stdout, stderr, err := runCbox(t, projectDir, "run", "app", "--", "echo", "hello-from-run")
+	require.NoError(t, err, "run failed: stdout=%s stderr=%s", stdout, stderr)
+
+	assert.Contains(t, stdout, "hello-from-run")
+
+	// Cleanup
+	runCbox(t, projectDir, "down")
+}
+
+// TestE2E_Run_EnvAccess tests that run command has access to service env vars.
+func TestE2E_Run_EnvAccess(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	projectDir := setupTestProject(t, "node-app")
+	projectName := filepath.Base(projectDir)
+
+	t.Cleanup(func() {
+		cleanupDocker(t, projectName)
+	})
+
+	// Create cbox.yaml with env var
+	cboxYaml := `version: "1"
+project:
+  name: ` + projectName + `
+services:
+  app:
+    path: .
+    runtime: nodejs
+    port: 3000
+    command: ["npm", "start"]
+    env:
+      NODE_ENV: production
+      TEST_RUN_VAR: "run-test-value"
+`
+	writeFile(t, projectDir, "cbox.yaml", cboxYaml)
+
+	// Build
+	_, _, err := runCbox(t, projectDir, "build")
+	require.NoError(t, err)
+
+	// Start services to create network
+	_, _, err = runCbox(t, projectDir, "up", "-d")
+	require.NoError(t, err)
+
+	err = waitForHealthy(t, "http://localhost:3000/health", 30*time.Second)
+	require.NoError(t, err)
+
+	// Run printenv to check env var
+	stdout, stderr, err := runCbox(t, projectDir, "run", "app", "--", "printenv", "TEST_RUN_VAR")
+	require.NoError(t, err, "run failed: stdout=%s stderr=%s", stdout, stderr)
+
+	assert.Contains(t, stdout, "run-test-value")
+
+	// Cleanup
+	runCbox(t, projectDir, "down")
+}
+
+// TestE2E_Run_ExitCode tests that run returns the exit code from the container.
+func TestE2E_Run_ExitCode(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	projectDir := setupTestProject(t, "node-app")
+	projectName := filepath.Base(projectDir)
+
+	t.Cleanup(func() {
+		cleanupDocker(t, projectName)
+	})
+
+	// Init and build
+	_, _, err := runCbox(t, projectDir, "init")
+	require.NoError(t, err)
+
+	_, _, err = runCbox(t, projectDir, "build")
+	require.NoError(t, err)
+
+	// Start services to create network
+	_, _, err = runCbox(t, projectDir, "up", "-d")
+	require.NoError(t, err)
+
+	err = waitForHealthy(t, "http://localhost:3000/health", 30*time.Second)
+	require.NoError(t, err)
+
+	// Run command that fails
+	_, _, err = runCbox(t, projectDir, "run", "app", "--", "sh", "-c", "exit 42")
+	assert.Error(t, err, "should fail with non-zero exit code")
+
+	// Cleanup
+	runCbox(t, projectDir, "down")
+}
+
+// TestE2E_Restart_SingleService tests restarting a single service.
+func TestE2E_Restart_SingleService(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	projectDir := setupTestProject(t, "node-app")
+	projectName := filepath.Base(projectDir)
+
+	t.Cleanup(func() {
+		cleanupDocker(t, projectName)
+	})
+
+	// Init, build, and start
+	_, _, err := runCbox(t, projectDir, "init")
+	require.NoError(t, err)
+
+	_, _, err = runCbox(t, projectDir, "build")
+	require.NoError(t, err)
+
+	_, _, err = runCbox(t, projectDir, "up", "-d")
+	require.NoError(t, err)
+
+	err = waitForHealthy(t, "http://localhost:3000/health", 30*time.Second)
+	require.NoError(t, err)
+
+	// Get container ID before restart
+	containerName := projectName + "_app"
+	idBefore, err := getContainerID(containerName)
+	require.NoError(t, err)
+	require.NotEmpty(t, idBefore)
+
+	// Restart
+	stdout, stderr, err := runCbox(t, projectDir, "restart", "app")
+	require.NoError(t, err, "restart failed: stdout=%s stderr=%s", stdout, stderr)
+
+	assert.Contains(t, stdout, "Restarted")
+
+	// Wait for healthy again
+	err = waitForHealthy(t, "http://localhost:3000/health", 30*time.Second)
+	require.NoError(t, err)
+
+	// Verify container is still running (restart preserves container, just restarts process)
+	assert.True(t, dockerContainerRunning(containerName), "container should be running after restart")
+
+	// Cleanup
+	runCbox(t, projectDir, "down")
+}
+
+// TestE2E_Restart_NoRunningServices tests restart when no services are running.
+func TestE2E_Restart_NoRunningServices(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	projectDir := setupTestProject(t, "node-app")
+	projectName := filepath.Base(projectDir)
+
+	t.Cleanup(func() {
+		cleanupDocker(t, projectName)
+	})
+
+	// Init but don't start
+	_, _, err := runCbox(t, projectDir, "init")
+	require.NoError(t, err)
+
+	// Restart should warn about no running services
+	stdout, _, err := runCbox(t, projectDir, "restart")
+	require.NoError(t, err)
+
+	assert.Contains(t, stdout, "No running services")
+}

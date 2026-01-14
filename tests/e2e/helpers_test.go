@@ -230,6 +230,16 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
+// getContainerID returns the container ID for a given container name.
+func getContainerID(containerName string) (string, error) {
+	cmd := exec.Command("docker", "inspect", "-f", "{{.Id}}", containerName)
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
 // buildCbox builds the cbox binary if it doesn't exist.
 func buildCbox(t *testing.T) {
 	t.Helper()

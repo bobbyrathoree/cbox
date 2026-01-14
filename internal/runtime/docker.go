@@ -199,6 +199,18 @@ func (d *Docker) StopContainer(ctx context.Context, nameOrID string, timeout tim
 	return nil
 }
 
+// RestartContainer restarts a container.
+func (d *Docker) RestartContainer(ctx context.Context, nameOrID string, timeout time.Duration) error {
+	d.console.Debug("Restarting container: %s", nameOrID)
+	args := []string{"restart", "-t", strconv.Itoa(int(timeout.Seconds())), nameOrID}
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to restart container: %s", string(output))
+	}
+	return nil
+}
+
 // RemoveContainer removes a container.
 func (d *Docker) RemoveContainer(ctx context.Context, nameOrID string) error {
 	d.console.Debug("Removing container: %s", nameOrID)
