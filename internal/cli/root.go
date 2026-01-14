@@ -141,6 +141,7 @@ func init() {
 	rootCmd.AddCommand(topCmd)
 	rootCmd.AddCommand(cleanCmd)
 	rootCmd.AddCommand(dashboardCmd)
+	rootCmd.AddCommand(dbCmd)
 }
 
 // Execute runs the root command
