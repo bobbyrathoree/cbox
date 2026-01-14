@@ -864,3 +864,196 @@ func TestE2E_Restart_NoRunningServices(t *testing.T) {
 
 	assert.Contains(t, stdout, "No running services")
 }
+
+// TestE2E_WaitHelp tests that cbox wait --help works.
+func TestE2E_WaitHelp(t *testing.T) {
+	stdout, _, err := runCbox(t, ".", "wait", "--help")
+	require.NoError(t, err)
+
+	assert.Contains(t, stdout, "Wait for services")
+	assert.Contains(t, stdout, "healthy")
+	assert.Contains(t, stdout, "timeout")
+}
+
+// TestE2E_ValidateHelp tests that cbox validate --help works.
+func TestE2E_ValidateHelp(t *testing.T) {
+	stdout, _, err := runCbox(t, ".", "validate", "--help")
+	require.NoError(t, err)
+
+	assert.Contains(t, stdout, "Validate")
+	assert.Contains(t, stdout, "cbox.yaml")
+	assert.Contains(t, stdout, "strict")
+}
+
+// TestE2E_Wait_HealthyService tests waiting for a healthy service.
+func TestE2E_Wait_HealthyService(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	projectDir := setupTestProject(t, "node-app")
+	projectName := filepath.Base(projectDir)
+
+	t.Cleanup(func() {
+		cleanupDocker(t, projectName)
+	})
+
+	// Init, build, and start
+	_, _, err := runCbox(t, projectDir, "init")
+	require.NoError(t, err)
+
+	_, _, err = runCbox(t, projectDir, "build")
+	require.NoError(t, err)
+
+	_, _, err = runCbox(t, projectDir, "up", "-d")
+	require.NoError(t, err)
+
+	// Wait for healthy
+	stdout, stderr, err := runCbox(t, projectDir, "wait", "--timeout", "60s")
+	require.NoError(t, err, "wait failed: stdout=%s stderr=%s", stdout, stderr)
+
+	assert.Contains(t, stdout, "healthy")
+
+	// Cleanup
+	runCbox(t, projectDir, "down")
+}
+
+// TestE2E_Wait_NoRunningServices tests wait when no services are running.
+func TestE2E_Wait_NoRunningServices(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	projectDir := setupTestProject(t, "node-app")
+	projectName := filepath.Base(projectDir)
+
+	t.Cleanup(func() {
+		cleanupDocker(t, projectName)
+	})
+
+	// Init but don't start
+	_, _, err := runCbox(t, projectDir, "init")
+	require.NoError(t, err)
+
+	// Wait should fail with no running services
+	_, _, err = runCbox(t, projectDir, "wait")
+	assert.Error(t, err, "wait should fail when no services running")
+}
+
+// TestE2E_Validate_ValidConfig tests validating a valid config.
+func TestE2E_Validate_ValidConfig(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	projectDir := setupTestProject(t, "node-app")
+
+	// Init creates a valid config
+	_, _, err := runCbox(t, projectDir, "init")
+	require.NoError(t, err)
+
+	// Validate should pass
+	stdout, stderr, err := runCbox(t, projectDir, "validate")
+	require.NoError(t, err, "validate failed: stdout=%s stderr=%s", stdout, stderr)
+
+	assert.Contains(t, stdout, "valid")
+}
+
+// TestE2E_Validate_InvalidYAML tests validating an invalid YAML file.
+func TestE2E_Validate_InvalidYAML(t *testing.T) {
+	projectDir := setupTestProject(t, "node-app")
+
+	// Write invalid YAML
+	writeFile(t, projectDir, "cbox.yaml", `
+version: "1"
+project:
+  name: test
+services:
+  app
+    invalid: yaml  # This is invalid YAML
+`)
+
+	// Validate should fail
+	_, _, err := runCbox(t, projectDir, "validate")
+	assert.Error(t, err, "validate should fail on invalid YAML")
+}
+
+// TestE2E_Validate_UndefinedDep tests detecting undefined dependencies.
+func TestE2E_Validate_UndefinedDep(t *testing.T) {
+	projectDir := setupTestProject(t, "node-app")
+
+	// Write config with undefined dependency
+	cboxYaml := `version: "1"
+project:
+  name: test
+services:
+  app:
+    image: node:18-alpine
+    depends_on:
+      - nonexistent
+`
+	writeFile(t, projectDir, "cbox.yaml", cboxYaml)
+
+	// Validate should fail
+	_, stderr, err := runCbox(t, projectDir, "validate")
+	assert.Error(t, err, "validate should fail on undefined dependency")
+	assert.Contains(t, stderr, "nonexistent")
+}
+
+// TestE2E_Validate_CircularDep tests detecting circular dependencies.
+func TestE2E_Validate_CircularDep(t *testing.T) {
+	projectDir := setupTestProject(t, "node-app")
+
+	// Write config with circular dependency
+	cboxYaml := `version: "1"
+project:
+  name: test
+services:
+  a:
+    image: alpine
+    depends_on: [b]
+  b:
+    image: alpine
+    depends_on: [a]
+`
+	writeFile(t, projectDir, "cbox.yaml", cboxYaml)
+
+	// Validate should fail
+	_, stderr, err := runCbox(t, projectDir, "validate")
+	assert.Error(t, err, "validate should fail on circular dependency")
+	assert.Contains(t, strings.ToLower(stderr), "circular")
+}
+
+// TestE2E_Validate_PortConflict tests detecting port conflicts.
+func TestE2E_Validate_PortConflict(t *testing.T) {
+	projectDir := setupTestProject(t, "node-app")
+
+	// Write config with port conflict
+	cboxYaml := `version: "1"
+project:
+  name: test
+services:
+  app1:
+    image: nginx
+    port: 8080
+  app2:
+    image: nginx
+    port: 8080
+`
+	writeFile(t, projectDir, "cbox.yaml", cboxYaml)
+
+	// Validate should fail due to port conflict
+	_, stderr, err := runCbox(t, projectDir, "validate")
+	assert.Error(t, err, "validate should fail on port conflict")
+	assert.Contains(t, stderr, "8080")
+}
+
+// TestE2E_Validate_NoConfig tests validate with no config file.
+func TestE2E_Validate_NoConfig(t *testing.T) {
+	projectDir := setupTestProject(t, "node-app")
+
+	// Don't create any config
+	// Validate should fail
+	_, _, err := runCbox(t, projectDir, "validate")
+	assert.Error(t, err, "validate should fail when no config exists")
+}

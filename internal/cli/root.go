@@ -143,6 +143,8 @@ func init() {
 	rootCmd.AddCommand(logsCmd)
 	rootCmd.AddCommand(execCmd)
 	rootCmd.AddCommand(runCmd)
+	rootCmd.AddCommand(waitCmd)
+	rootCmd.AddCommand(validateCmd)
 	rootCmd.AddCommand(doctorCmd)
 	rootCmd.AddCommand(topCmd)
 	rootCmd.AddCommand(cleanCmd)
