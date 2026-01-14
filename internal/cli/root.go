@@ -142,6 +142,7 @@ func init() {
 	rootCmd.AddCommand(cleanCmd)
 	rootCmd.AddCommand(dashboardCmd)
 	rootCmd.AddCommand(dbCmd)
+	rootCmd.AddCommand(tunnelCmd)
 }
 
 // Execute runs the root command
