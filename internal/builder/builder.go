@@ -9,7 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/bobbyrathore/cbox/internal/builder/golang"
 	"github.com/bobbyrathore/cbox/internal/builder/nodejs"
+	"github.com/bobbyrathore/cbox/internal/builder/python"
 	"github.com/bobbyrathore/cbox/internal/config"
 	"github.com/bobbyrathore/cbox/internal/output"
 )
@@ -102,13 +104,24 @@ func (b *Builder) Build(ctx context.Context, opts BuildOptions) (*BuildResult, e
 	// Generate .dockerignore if it doesn't exist
 	dockerignorePath := filepath.Join(servicePath, ".dockerignore")
 	if _, err := os.Stat(dockerignorePath); os.IsNotExist(err) {
-		if runtime == "nodejs" || runtime == "node" {
-			project, _ := nodejs.Detect(servicePath)
-			if project != nil {
-				ignore := nodejs.GenerateDockerignore(project)
-				os.WriteFile(dockerignorePath+".cbox", []byte(ignore), 0644)
-				defer os.Remove(dockerignorePath + ".cbox")
+		var ignore string
+		switch runtime {
+		case "nodejs", "node":
+			if project, _ := nodejs.Detect(servicePath); project != nil {
+				ignore = nodejs.GenerateDockerignore(project)
 			}
+		case "python":
+			if project, _ := python.Detect(servicePath); project != nil {
+				ignore = python.GenerateDockerignore(project)
+			}
+		case "go", "golang":
+			if project, _ := golang.Detect(servicePath); project != nil {
+				ignore = golang.GenerateDockerignore(project)
+			}
+		}
+		if ignore != "" {
+			os.WriteFile(dockerignorePath+".cbox", []byte(ignore), 0644)
+			defer os.Remove(dockerignorePath + ".cbox")
 		}
 	}
 
@@ -143,10 +156,36 @@ func (b *Builder) generateDockerfile(servicePath, runtime string, opts BuildOpti
 		return nodejs.GenerateDockerfile(project, port)
 
 	case "go", "golang":
-		return "", fmt.Errorf("Go runtime not yet implemented")
+		project, err := golang.Detect(servicePath)
+		if err != nil {
+			return "", fmt.Errorf("failed to detect Go project: %w", err)
+		}
+
+		port := opts.Service.Port
+		if port == 0 {
+			port = project.GetDefaultPort()
+		}
+
+		if opts.DevMode {
+			return golang.GenerateDevDockerfile(project, port)
+		}
+		return golang.GenerateDockerfile(project, port)
 
 	case "python":
-		return "", fmt.Errorf("Python runtime not yet implemented")
+		project, err := python.Detect(servicePath)
+		if err != nil {
+			return "", fmt.Errorf("failed to detect Python project: %w", err)
+		}
+
+		port := opts.Service.Port
+		if port == 0 {
+			port = project.GetDefaultPort()
+		}
+
+		if opts.DevMode {
+			return python.GenerateDevDockerfile(project, port)
+		}
+		return python.GenerateDockerfile(project, port)
 
 	default:
 		return "", fmt.Errorf("unknown runtime: %s", runtime)
@@ -205,14 +244,12 @@ func detectRuntime(projectPath string) string {
 	}
 
 	// Check for Go
-	if fileExists(filepath.Join(projectPath, "go.mod")) {
+	if golang.IsProject(projectPath) {
 		return "go"
 	}
 
 	// Check for Python
-	if fileExists(filepath.Join(projectPath, "requirements.txt")) ||
-		fileExists(filepath.Join(projectPath, "pyproject.toml")) ||
-		fileExists(filepath.Join(projectPath, "setup.py")) {
+	if python.IsProject(projectPath) {
 		return "python"
 	}
 

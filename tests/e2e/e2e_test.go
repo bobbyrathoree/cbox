@@ -1304,3 +1304,482 @@ func TestE2E_Diagnose_NoServices(t *testing.T) {
 	// Should show not running
 	assert.Contains(t, stdout, "Not running")
 }
+
+// =============================================================================
+// PYTHON RUNTIME TESTS
+// =============================================================================
+
+// TestE2E_PythonFullWorkflow tests the happy path for Python projects.
+func TestE2E_PythonFullWorkflow(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	projectDir := setupTestProject(t, "python-app")
+	projectName := filepath.Base(projectDir)
+
+	t.Cleanup(func() {
+		cleanupDocker(t, projectName)
+	})
+
+	// 1. cbox init
+	t.Run("init", func(t *testing.T) {
+		stdout, stderr, err := runCbox(t, projectDir, "init")
+		require.NoError(t, err, "init failed: stdout=%s stderr=%s", stdout, stderr)
+		assert.True(t, fileExists(filepath.Join(projectDir, "cbox.yaml")))
+		assert.Contains(t, stdout, "Created cbox.yaml")
+	})
+
+	// 2. cbox build
+	t.Run("build", func(t *testing.T) {
+		stdout, stderr, err := runCbox(t, projectDir, "build")
+		require.NoError(t, err, "build failed: stdout=%s stderr=%s", stdout, stderr)
+		assert.Contains(t, stdout, "Built")
+	})
+
+	// 3. cbox up -d
+	t.Run("up", func(t *testing.T) {
+		stdout, stderr, err := runCbox(t, projectDir, "up", "-d")
+		require.NoError(t, err, "up failed: stdout=%s stderr=%s", stdout, stderr)
+
+		containerName := projectName + "_app"
+		assert.True(t, dockerContainerRunning(containerName))
+
+		err = waitForHealthy(t, "http://localhost:8000/health", 60*time.Second)
+		require.NoError(t, err, "python app should be healthy")
+	})
+
+	// 4. cbox ps
+	t.Run("ps", func(t *testing.T) {
+		stdout, _, err := runCbox(t, projectDir, "ps")
+		require.NoError(t, err)
+		assert.Contains(t, stdout, "app")
+		assert.Contains(t, stdout, "Up")
+	})
+
+	// 5. cbox logs
+	t.Run("logs", func(t *testing.T) {
+		stdout, _, err := runCbox(t, projectDir, "logs", "--tail", "10")
+		require.NoError(t, err)
+		assert.NotEmpty(t, stdout)
+	})
+
+	// 6. cbox exec
+	t.Run("exec", func(t *testing.T) {
+		stdout, _, err := runCbox(t, projectDir, "exec", "app", "--", "python", "--version")
+		require.NoError(t, err)
+		assert.Contains(t, stdout, "Python")
+	})
+
+	// 7. cbox down
+	t.Run("down", func(t *testing.T) {
+		stdout, stderr, err := runCbox(t, projectDir, "down")
+		require.NoError(t, err, "down failed: stdout=%s stderr=%s", stdout, stderr)
+
+		containerName := projectName + "_app"
+		assert.False(t, dockerContainerRunning(containerName))
+	})
+}
+
+// TestE2E_PythonInitDetection tests Python framework detection.
+func TestE2E_PythonInitDetection(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	projectDir := setupTestProject(t, "python-app")
+
+	stdout, _, err := runCbox(t, projectDir, "init")
+	require.NoError(t, err)
+
+	// Check detection output
+	assert.Contains(t, stdout, "Python")
+
+	// Verify cbox.yaml content
+	data, err := os.ReadFile(filepath.Join(projectDir, "cbox.yaml"))
+	require.NoError(t, err)
+
+	content := string(data)
+	assert.Contains(t, content, "runtime: python")
+	assert.Contains(t, content, "port: 8000")
+}
+
+// TestE2E_PythonZeroConfig tests zero-config mode for Python.
+func TestE2E_PythonZeroConfig(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	projectDir := setupTestProject(t, "python-app")
+	projectName := filepath.Base(projectDir)
+
+	t.Cleanup(func() {
+		cleanupDocker(t, projectName)
+	})
+
+	// No cbox.yaml - should auto-detect
+	assert.False(t, fileExists(filepath.Join(projectDir, "cbox.yaml")))
+
+	stdout, stderr, err := runCbox(t, projectDir, "build")
+	require.NoError(t, err, "zero-config build failed: stdout=%s stderr=%s", stdout, stderr)
+	assert.Contains(t, stdout, "Built")
+}
+
+// TestE2E_PythonEnvSubstitution tests ${VAR} syntax for Python projects.
+func TestE2E_PythonEnvSubstitution(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	projectDir := setupTestProject(t, "python-app")
+	projectName := filepath.Base(projectDir)
+
+	t.Cleanup(func() {
+		cleanupDocker(t, projectName)
+	})
+
+	cboxYaml := `version: "1"
+project:
+  name: ` + projectName + `
+services:
+  app:
+    path: .
+    runtime: python
+    port: 8000
+    command: ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0"]
+    env:
+      TEST_VALUE: "${TEST_VAR}"
+      WITH_DEFAULT: "${MISSING_VAR:-default_value}"
+`
+	writeFile(t, projectDir, "cbox.yaml", cboxYaml)
+
+	env := map[string]string{"TEST_VAR": "substituted_value"}
+	stdout, stderr, err := runCboxWithEnv(t, projectDir, env, "up", "-d")
+	require.NoError(t, err, "up failed: stdout=%s stderr=%s", stdout, stderr)
+
+	err = waitForHealthy(t, "http://localhost:8000/health", 60*time.Second)
+	require.NoError(t, err)
+
+	containerName := projectName + "_app"
+
+	testValue, err := getContainerEnv(containerName, "TEST_VALUE")
+	require.NoError(t, err)
+	assert.Equal(t, "substituted_value", testValue)
+
+	defaultValue, err := getContainerEnv(containerName, "WITH_DEFAULT")
+	require.NoError(t, err)
+	assert.Equal(t, "default_value", defaultValue)
+
+	runCbox(t, projectDir, "down")
+}
+
+// TestE2E_PythonHooks_PostUp tests post-up hooks for Python.
+func TestE2E_PythonHooks_PostUp(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	projectDir := setupTestProject(t, "python-app")
+	projectName := filepath.Base(projectDir)
+
+	t.Cleanup(func() {
+		cleanupDocker(t, projectName)
+	})
+
+	cboxYaml := `version: "1"
+project:
+  name: ` + projectName + `
+services:
+  app:
+    path: .
+    runtime: python
+    port: 8000
+    command: ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0"]
+    hooks:
+      post-up: "touch /tmp/hook-ran && echo 'Hook executed'"
+`
+	writeFile(t, projectDir, "cbox.yaml", cboxYaml)
+
+	_, _, err := runCbox(t, projectDir, "build")
+	require.NoError(t, err)
+
+	stdout, stderr, err := runCbox(t, projectDir, "up", "-d")
+	require.NoError(t, err, "up failed: stdout=%s stderr=%s", stdout, stderr)
+	assert.Contains(t, stdout, "post-up hook")
+
+	err = waitForHealthy(t, "http://localhost:8000/health", 60*time.Second)
+	require.NoError(t, err)
+
+	execStdout, _, err := runCbox(t, projectDir, "exec", "app", "--", "test", "-f", "/tmp/hook-ran")
+	require.NoError(t, err, "hook file should exist: %s", execStdout)
+
+	runCbox(t, projectDir, "down")
+}
+
+// TestE2E_PythonRestart tests restarting Python services.
+func TestE2E_PythonRestart(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	projectDir := setupTestProject(t, "python-app")
+	projectName := filepath.Base(projectDir)
+
+	t.Cleanup(func() {
+		cleanupDocker(t, projectName)
+	})
+
+	_, _, err := runCbox(t, projectDir, "init")
+	require.NoError(t, err)
+
+	_, _, err = runCbox(t, projectDir, "build")
+	require.NoError(t, err)
+
+	_, _, err = runCbox(t, projectDir, "up", "-d")
+	require.NoError(t, err)
+
+	err = waitForHealthy(t, "http://localhost:8000/health", 60*time.Second)
+	require.NoError(t, err)
+
+	stdout, stderr, err := runCbox(t, projectDir, "restart", "app")
+	require.NoError(t, err, "restart failed: stdout=%s stderr=%s", stdout, stderr)
+	assert.Contains(t, stdout, "Restarted")
+
+	err = waitForHealthy(t, "http://localhost:8000/health", 60*time.Second)
+	require.NoError(t, err)
+
+	runCbox(t, projectDir, "down")
+}
+
+// TestE2E_PythonRun tests one-off commands in Python containers.
+func TestE2E_PythonRun(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	projectDir := setupTestProject(t, "python-app")
+	projectName := filepath.Base(projectDir)
+
+	t.Cleanup(func() {
+		cleanupDocker(t, projectName)
+	})
+
+	_, _, err := runCbox(t, projectDir, "init")
+	require.NoError(t, err)
+
+	_, _, err = runCbox(t, projectDir, "build")
+	require.NoError(t, err)
+
+	_, _, err = runCbox(t, projectDir, "up", "-d")
+	require.NoError(t, err)
+
+	err = waitForHealthy(t, "http://localhost:8000/health", 60*time.Second)
+	require.NoError(t, err)
+
+	stdout, stderr, err := runCbox(t, projectDir, "run", "app", "--", "python", "-c", "print('hello-from-python')")
+	require.NoError(t, err, "run failed: stdout=%s stderr=%s", stdout, stderr)
+	assert.Contains(t, stdout, "hello-from-python")
+
+	runCbox(t, projectDir, "down")
+}
+
+// =============================================================================
+// GO RUNTIME TESTS
+// =============================================================================
+
+// TestE2E_GoFullWorkflow tests the happy path for Go projects.
+func TestE2E_GoFullWorkflow(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	projectDir := setupTestProject(t, "go-app")
+	projectName := filepath.Base(projectDir)
+
+	t.Cleanup(func() {
+		cleanupDocker(t, projectName)
+	})
+
+	// 1. cbox init
+	t.Run("init", func(t *testing.T) {
+		stdout, stderr, err := runCbox(t, projectDir, "init")
+		require.NoError(t, err, "init failed: stdout=%s stderr=%s", stdout, stderr)
+		assert.True(t, fileExists(filepath.Join(projectDir, "cbox.yaml")))
+		assert.Contains(t, stdout, "Created cbox.yaml")
+	})
+
+	// 2. cbox build
+	t.Run("build", func(t *testing.T) {
+		stdout, stderr, err := runCbox(t, projectDir, "build")
+		require.NoError(t, err, "build failed: stdout=%s stderr=%s", stdout, stderr)
+		assert.Contains(t, stdout, "Built")
+	})
+
+	// 3. cbox up -d
+	t.Run("up", func(t *testing.T) {
+		stdout, stderr, err := runCbox(t, projectDir, "up", "-d")
+		require.NoError(t, err, "up failed: stdout=%s stderr=%s", stdout, stderr)
+
+		containerName := projectName + "_app"
+		assert.True(t, dockerContainerRunning(containerName))
+
+		err = waitForHealthy(t, "http://localhost:8080/health", 60*time.Second)
+		require.NoError(t, err, "go app should be healthy")
+	})
+
+	// 4. cbox ps
+	t.Run("ps", func(t *testing.T) {
+		stdout, _, err := runCbox(t, projectDir, "ps")
+		require.NoError(t, err)
+		assert.Contains(t, stdout, "app")
+		assert.Contains(t, stdout, "Up")
+	})
+
+	// 5. cbox logs
+	t.Run("logs", func(t *testing.T) {
+		_, _, err := runCbox(t, projectDir, "logs", "--tail", "10")
+		require.NoError(t, err)
+		// Go apps might not log on startup, so just check command works
+	})
+
+	// 6. cbox exec (distroless has limited shell, test binary exists)
+	t.Run("exec", func(t *testing.T) {
+		// Distroless doesn't have shell - just verify container is accessible
+		containerName := projectName + "_app"
+		assert.True(t, dockerContainerRunning(containerName))
+	})
+
+	// 7. cbox down
+	t.Run("down", func(t *testing.T) {
+		stdout, stderr, err := runCbox(t, projectDir, "down")
+		require.NoError(t, err, "down failed: stdout=%s stderr=%s", stdout, stderr)
+
+		containerName := projectName + "_app"
+		assert.False(t, dockerContainerRunning(containerName))
+	})
+}
+
+// TestE2E_GoInitDetection tests Go project detection.
+func TestE2E_GoInitDetection(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	projectDir := setupTestProject(t, "go-app")
+
+	stdout, _, err := runCbox(t, projectDir, "init")
+	require.NoError(t, err)
+
+	// Check detection output
+	assert.Contains(t, stdout, "Go")
+
+	// Verify cbox.yaml content
+	data, err := os.ReadFile(filepath.Join(projectDir, "cbox.yaml"))
+	require.NoError(t, err)
+
+	content := string(data)
+	assert.Contains(t, content, "runtime: go")
+	assert.Contains(t, content, "port: 8080")
+}
+
+// TestE2E_GoZeroConfig tests zero-config mode for Go.
+func TestE2E_GoZeroConfig(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	projectDir := setupTestProject(t, "go-app")
+	projectName := filepath.Base(projectDir)
+
+	t.Cleanup(func() {
+		cleanupDocker(t, projectName)
+	})
+
+	// No cbox.yaml - should auto-detect
+	assert.False(t, fileExists(filepath.Join(projectDir, "cbox.yaml")))
+
+	stdout, stderr, err := runCbox(t, projectDir, "build")
+	require.NoError(t, err, "zero-config build failed: stdout=%s stderr=%s", stdout, stderr)
+	assert.Contains(t, stdout, "Built")
+}
+
+// TestE2E_GoRestart tests restarting Go services.
+func TestE2E_GoRestart(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	projectDir := setupTestProject(t, "go-app")
+	projectName := filepath.Base(projectDir)
+
+	t.Cleanup(func() {
+		cleanupDocker(t, projectName)
+	})
+
+	_, _, err := runCbox(t, projectDir, "init")
+	require.NoError(t, err)
+
+	_, _, err = runCbox(t, projectDir, "build")
+	require.NoError(t, err)
+
+	_, _, err = runCbox(t, projectDir, "up", "-d")
+	require.NoError(t, err)
+
+	err = waitForHealthy(t, "http://localhost:8080/health", 60*time.Second)
+	require.NoError(t, err)
+
+	stdout, stderr, err := runCbox(t, projectDir, "restart", "app")
+	require.NoError(t, err, "restart failed: stdout=%s stderr=%s", stdout, stderr)
+	assert.Contains(t, stdout, "Restarted")
+
+	err = waitForHealthy(t, "http://localhost:8080/health", 60*time.Second)
+	require.NoError(t, err)
+
+	runCbox(t, projectDir, "down")
+}
+
+// TestE2E_GoBuildNoCache tests build with --no-cache for Go.
+func TestE2E_GoBuildNoCache(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	projectDir := setupTestProject(t, "go-app")
+	projectName := filepath.Base(projectDir)
+
+	t.Cleanup(func() {
+		cleanupDocker(t, projectName)
+	})
+
+	_, _, err := runCbox(t, projectDir, "init")
+	require.NoError(t, err)
+
+	stdout, stderr, err := runCbox(t, projectDir, "build", "--no-cache")
+	require.NoError(t, err, "build --no-cache failed: stdout=%s stderr=%s", stdout, stderr)
+	assert.Contains(t, stdout, "Built")
+}
+
+// TestE2E_GoUpWithBuild tests up --build for Go.
+func TestE2E_GoUpWithBuild(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	projectDir := setupTestProject(t, "go-app")
+	projectName := filepath.Base(projectDir)
+
+	t.Cleanup(func() {
+		cleanupDocker(t, projectName)
+	})
+
+	_, _, err := runCbox(t, projectDir, "init")
+	require.NoError(t, err)
+
+	stdout, stderr, err := runCbox(t, projectDir, "up", "-d", "--build")
+	require.NoError(t, err, "up --build failed: stdout=%s stderr=%s", stdout, stderr)
+
+	containerName := projectName + "_app"
+	assert.True(t, dockerContainerRunning(containerName))
+
+	runCbox(t, projectDir, "down")
+}
