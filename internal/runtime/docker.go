@@ -41,16 +41,17 @@ type Container struct {
 
 // ContainerConfig contains options for creating a container.
 type ContainerConfig struct {
-	Name        string
-	Image       string
-	Ports       []PortMapping
-	Env         map[string]string
-	Volumes     []VolumeMount
-	Network     string
-	Command     []string
-	Labels      map[string]string
-	BindMounts  []BindMount // For dev mode
-	Healthcheck *HealthcheckConfig
+	Name           string
+	Image          string
+	Ports          []PortMapping
+	Env            map[string]string
+	Volumes        []VolumeMount
+	Network        string
+	NetworkAliases []string
+	Command        []string
+	Labels         map[string]string
+	BindMounts     []BindMount // For dev mode
+	Healthcheck    *HealthcheckConfig
 }
 
 // PortMapping represents a port mapping.
@@ -117,6 +118,11 @@ func (d *Docker) CreateContainer(ctx context.Context, cfg ContainerConfig) (stri
 	// Network
 	if cfg.Network != "" {
 		args = append(args, "--network", cfg.Network)
+	}
+
+	// Network aliases (for service discovery)
+	for _, alias := range cfg.NetworkAliases {
+		args = append(args, "--network-alias", alias)
 	}
 
 	// Ports
@@ -503,11 +509,12 @@ func ContainerConfigFromService(
 	containerName := fmt.Sprintf("%s_%s", projectName, name)
 
 	cfg := ContainerConfig{
-		Name:    containerName,
-		Image:   imageName,
-		Network: network,
-		Env:     svc.Env,
-		Command: svc.Command,
+		Name:           containerName,
+		Image:          imageName,
+		Network:        network,
+		NetworkAliases: []string{name},
+		Env:            svc.Env,
+		Command:        svc.Command,
 		Labels: map[string]string{
 			"cbox.project": projectName,
 			"cbox.service": name,
@@ -556,12 +563,33 @@ func ContainerConfigFromService(
 			if port == 0 {
 				port = 80
 			}
+
+			// Set sensible defaults for health check timing if not specified
+			interval := svc.Healthcheck.Interval
+			if interval == 0 {
+				interval = 10 * time.Second
+			}
+			timeout := svc.Healthcheck.Timeout
+			if timeout == 0 {
+				timeout = 5 * time.Second
+			}
+			retries := svc.Healthcheck.Retries
+			if retries == 0 {
+				retries = 3
+			}
+			startPeriod := svc.Healthcheck.StartPeriod
+			if startPeriod == 0 {
+				startPeriod = 5 * time.Second
+			}
+
+			// Use wget instead of curl (curl not available in slim images)
+			// CMD-SHELL form is more reliable than CMD with array
 			cfg.Healthcheck = &HealthcheckConfig{
-				Test:        []string{"CMD", "curl", "-f", fmt.Sprintf("http://localhost:%d%s", port, svc.Healthcheck.Path)},
-				Interval:    svc.Healthcheck.Interval,
-				Timeout:     svc.Healthcheck.Timeout,
-				Retries:     svc.Healthcheck.Retries,
-				StartPeriod: svc.Healthcheck.StartPeriod,
+				Test:        []string{"CMD-SHELL", fmt.Sprintf("wget -q --spider http://localhost:%d%s || exit 1", port, svc.Healthcheck.Path)},
+				Interval:    interval,
+				Timeout:     timeout,
+				Retries:     retries,
+				StartPeriod: startPeriod,
 			}
 		}
 	}

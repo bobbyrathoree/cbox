@@ -1,12 +1,12 @@
 package dev
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -273,34 +273,22 @@ func (d *DevLoop) streamAllLogs(ctx context.Context, services []string) {
 			containerName := fmt.Sprintf("%s_%s", d.config.Project.Name, name)
 
 			// Wait a bit for container to start
-			time.Sleep(1 * time.Second)
+			time.Sleep(2 * time.Second)
 
 			reader, err := d.runtime.ContainerLogs(ctx, containerName, true, 10)
 			if err != nil {
+				d.console.Warn("Could not stream logs for %s: %s", name, err)
 				return
 			}
 			defer reader.Close()
 
-			buf := make([]byte, 1024)
-			for {
+			scanner := bufio.NewScanner(reader)
+			for scanner.Scan() {
 				select {
 				case <-ctx.Done():
 					return
 				default:
-					n, err := reader.Read(buf)
-					if err != nil {
-						return
-					}
-					if n > 0 {
-						// Split by newlines and print with service prefix
-						lines := strings.Split(string(buf[:n]), "\n")
-						for _, line := range lines {
-							line = strings.TrimSpace(line)
-							if line != "" {
-								d.console.ServiceLog(name, line)
-							}
-						}
-					}
+					d.console.ServiceLog(name, scanner.Text())
 				}
 			}
 		}(svcName)

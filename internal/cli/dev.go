@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os/exec"
 
 	"github.com/bobbyrathore/cbox/internal/dev"
 	"github.com/bobbyrathore/cbox/internal/output"
@@ -36,6 +37,16 @@ func init() {
 func runDev(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 	console := output.NewWithOptions(verbose, quiet)
+
+	// Check Docker is running
+	dockerCmd := exec.CommandContext(ctx, "docker", "info")
+	if err := dockerCmd.Run(); err != nil {
+		console.ErrorWithHint(
+			"Docker daemon is not running",
+			"Start Docker Desktop or run 'sudo systemctl start docker'",
+		)
+		return fmt.Errorf("docker not available: %w", err)
+	}
 
 	// Load configuration
 	cfg, err := loadConfig()
