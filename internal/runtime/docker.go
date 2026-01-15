@@ -320,6 +320,16 @@ func (d *Docker) ListContainers(ctx context.Context, labels map[string]string, a
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	output, err := cmd.Output()
 	if err != nil {
+		// docker ps returns exit code 1 when filter matches nothing, which is not an error
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			// If stderr is empty or just whitespace, treat as "no results"
+			stderr := string(exitErr.Stderr)
+			if strings.TrimSpace(stderr) == "" {
+				return []Container{}, nil
+			}
+			// Real error - return it with stderr context
+			return nil, fmt.Errorf("docker ps failed: %s", stderr)
+		}
 		return nil, err
 	}
 
@@ -506,8 +516,13 @@ func ContainerConfigFromService(
 
 	// Ports
 	if svc.Port > 0 {
+		// Use HostPort if set (port was remapped due to conflict), otherwise use Port
+		hostPort := svc.Port
+		if svc.HostPort > 0 {
+			hostPort = svc.HostPort
+		}
 		cfg.Ports = append(cfg.Ports, PortMapping{
-			HostPort:      svc.Port,
+			HostPort:      hostPort,
 			ContainerPort: svc.Port,
 		})
 	}

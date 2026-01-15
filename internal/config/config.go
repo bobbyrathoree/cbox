@@ -8,8 +8,8 @@ type Config struct {
 	Version  string             `yaml:"version" validate:"required,eq=1"`
 	Project  ProjectConfig      `yaml:"project"`
 	Services map[string]Service `yaml:"services" validate:"required,min=1,dive"`
-	Volumes  map[string]Volume  `yaml:"volumes"`
-	Secrets  map[string]Secret  `yaml:"secrets"`
+	Volumes  map[string]Volume  `yaml:"volumes,omitempty"`
+	Secrets  map[string]Secret  `yaml:"secrets,omitempty"`
 }
 
 // ProjectConfig contains project-level settings.
@@ -20,94 +20,95 @@ type ProjectConfig struct {
 // Service represents a single service in the stack.
 type Service struct {
 	// Source - one of Path or Image must be set
-	Path  string `yaml:"path"`  // Build from source directory
-	Image string `yaml:"image"` // Use existing image
+	Path  string `yaml:"path,omitempty"`  // Build from source directory
+	Image string `yaml:"image,omitempty"` // Use existing image
 
 	// Runtime configuration
-	Runtime string `yaml:"runtime"` // nodejs, go, python, etc.
+	Runtime string `yaml:"runtime,omitempty"` // nodejs, go, python, etc.
 
 	// Build configuration
-	Build BuildConfig `yaml:"build"`
+	Build BuildConfig `yaml:"build,omitempty"`
 
 	// Container configuration
-	Port    int      `yaml:"port"`    // Primary exposed port
-	Expose  []int    `yaml:"expose"`  // All exposed ports
-	Command []string `yaml:"command"` // Override CMD
+	Port     int      `yaml:"port,omitempty"`    // Primary exposed port
+	HostPort int      `yaml:"-"`                 // Runtime-only: alternate host port when port conflict detected
+	Expose   []int    `yaml:"expose,omitempty"`  // All exposed ports
+	Command  []string `yaml:"command,omitempty"` // Override CMD
 
 	// Development mode
-	Dev DevConfig `yaml:"dev"`
+	Dev DevConfig `yaml:"dev,omitempty"`
 
 	// Dependencies and health
-	DependsOn   []string          `yaml:"depends_on"`
-	Healthcheck HealthcheckConfig `yaml:"healthcheck"`
+	DependsOn   []string          `yaml:"depends_on,omitempty"`
+	Healthcheck HealthcheckConfig `yaml:"healthcheck,omitempty"`
 
 	// Lifecycle hooks
-	Hooks HooksConfig `yaml:"hooks"`
+	Hooks HooksConfig `yaml:"hooks,omitempty"`
 
 	// Environment
-	Env     map[string]string `yaml:"env"`
-	EnvFile string            `yaml:"env_file"`
-	Secrets []string          `yaml:"secrets"` // References to secrets
+	Env     map[string]string `yaml:"env,omitempty"`
+	EnvFile string            `yaml:"env_file,omitempty"`
+	Secrets []string          `yaml:"secrets,omitempty"` // References to secrets
 
 	// Storage
-	Volumes []string `yaml:"volumes"` // volume_name:/path or ./host:/container
+	Volumes []string `yaml:"volumes,omitempty"` // volume_name:/path or ./host:/container
 }
 
 // HooksConfig defines lifecycle hooks for a service.
 type HooksConfig struct {
-	PostUp  string `yaml:"post-up"`  // Run after container starts and is healthy
-	PreDown string `yaml:"pre-down"` // Run before container stops
+	PostUp  string `yaml:"post-up,omitempty"`  // Run after container starts and is healthy
+	PreDown string `yaml:"pre-down,omitempty"` // Run before container stops
 }
 
 // BuildConfig contains build-time configuration.
 type BuildConfig struct {
-	Dockerfile string            `yaml:"dockerfile"` // Custom Dockerfile path (escape hatch)
-	Target     string            `yaml:"target"`     // Multi-stage build target
-	Args       map[string]string `yaml:"args"`       // Build arguments
-	Context    string            `yaml:"context"`    // Build context (defaults to Path)
+	Dockerfile string            `yaml:"dockerfile,omitempty"` // Custom Dockerfile path (escape hatch)
+	Target     string            `yaml:"target,omitempty"`     // Multi-stage build target
+	Args       map[string]string `yaml:"args,omitempty"`       // Build arguments
+	Context    string            `yaml:"context,omitempty"`    // Build context (defaults to Path)
 }
 
 // DevConfig contains development mode settings.
 type DevConfig struct {
-	Command []string    `yaml:"command"` // Override command for dev mode
-	Watch   WatchConfig `yaml:"watch"`   // File watching configuration
-	Sync    bool        `yaml:"sync"`    // Enable file sync (bind mount)
+	Command []string    `yaml:"command,omitempty"` // Override command for dev mode
+	Watch   WatchConfig `yaml:"watch,omitempty"`   // File watching configuration
+	Sync    bool        `yaml:"sync,omitempty"`    // Enable file sync (bind mount)
 }
 
 // WatchConfig specifies which files to watch and ignore.
 type WatchConfig struct {
-	Paths  []string `yaml:"paths"`  // Paths to watch (e.g., ["src/", "package.json"])
-	Ignore []string `yaml:"ignore"` // Patterns to ignore (e.g., ["node_modules/"])
+	Paths  []string `yaml:"paths,omitempty"`  // Paths to watch (e.g., ["src/", "package.json"])
+	Ignore []string `yaml:"ignore,omitempty"` // Patterns to ignore (e.g., ["node_modules/"])
 }
 
 // HealthcheckConfig defines how to check service health.
 type HealthcheckConfig struct {
 	// HTTP healthcheck
-	Path string `yaml:"path"` // HTTP path to check (e.g., "/health")
+	Path string `yaml:"path,omitempty"` // HTTP path to check (e.g., "/health")
 
 	// TCP healthcheck (if Path is empty, just check port is open)
 
 	// Timing
-	Interval time.Duration `yaml:"interval"` // Time between checks
-	Timeout  time.Duration `yaml:"timeout"`  // Timeout for each check
-	Retries  int           `yaml:"retries"`  // Number of retries before unhealthy
+	Interval time.Duration `yaml:"interval,omitempty"` // Time between checks
+	Timeout  time.Duration `yaml:"timeout,omitempty"`  // Timeout for each check
+	Retries  int           `yaml:"retries,omitempty"`  // Number of retries before unhealthy
 
 	// Start period - grace period before health checks count
-	StartPeriod time.Duration `yaml:"start_period"`
+	StartPeriod time.Duration `yaml:"start_period,omitempty"`
 }
 
 // Volume represents a named volume.
 type Volume struct {
-	Driver     string            `yaml:"driver"`      // Volume driver (default: local)
-	DriverOpts map[string]string `yaml:"driver_opts"` // Driver options
-	External   bool              `yaml:"external"`    // Use existing volume
+	Driver     string            `yaml:"driver,omitempty"`      // Volume driver (default: local)
+	DriverOpts map[string]string `yaml:"driver_opts,omitempty"` // Driver options
+	External   bool              `yaml:"external,omitempty"`    // Use existing volume
 }
 
 // Secret represents a secret configuration.
 type Secret struct {
 	// Source - one of Env or File must be set
-	Env  string `yaml:"env"`  // Environment variable name
-	File string `yaml:"file"` // Path to secret file
+	Env  string `yaml:"env,omitempty"`  // Environment variable name
+	File string `yaml:"file,omitempty"` // Path to secret file
 }
 
 // IsBuildService returns true if this service builds from source.

@@ -1,12 +1,19 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
 	"time"
 
+	"github.com/bobbyrathore/cbox/internal/config"
 	"github.com/bobbyrathore/cbox/internal/orchestrator"
 	"github.com/bobbyrathore/cbox/internal/output"
+	"github.com/bobbyrathore/cbox/internal/runtime"
 	"github.com/spf13/cobra"
 )
 
@@ -76,9 +83,63 @@ func runUp(cmd *cobra.Command, args []string) error {
 
 	if !upDetach {
 		console.Info("Press Ctrl+C to stop")
-		// TODO: Stream logs in foreground mode
-		select {}
+
+		// Setup signal handling for graceful shutdown
+		ctx, cancel := context.WithCancel(ctx)
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		go func() {
+			<-sigCh
+			console.Newline()
+			console.Info("Shutting down...")
+			cancel()
+		}()
+
+		// Create docker runtime for log streaming
+		docker := runtime.New(console)
+
+		// Stream logs from all services
+		go streamAllLogs(ctx, cfg, docker, console)
+
+		// Wait for shutdown signal
+		<-ctx.Done()
+
+		// Cleanup - stop listening for signals and shut down services
+		signal.Stop(sigCh)
+		console.Newline()
+		orch.Down(context.Background(), orchestrator.DownOptions{})
 	}
 
 	return nil
+}
+
+// streamAllLogs streams logs from all services concurrently.
+func streamAllLogs(ctx context.Context, cfg *config.Config, docker *runtime.Docker, console *output.Console) {
+	var wg sync.WaitGroup
+	for name := range cfg.Services {
+		wg.Add(1)
+		go func(svcName string) {
+			defer wg.Done()
+			containerName := fmt.Sprintf("%s_%s", cfg.Project.Name, svcName)
+
+			// Get log reader with follow mode
+			reader, err := docker.ContainerLogs(ctx, containerName, true, 10)
+			if err != nil {
+				return
+			}
+			defer reader.Close()
+
+			// Read and output logs line by line
+			scanner := bufio.NewScanner(reader)
+			for scanner.Scan() {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					console.ServiceLog(svcName, scanner.Text())
+				}
+			}
+		}(name)
+	}
+	wg.Wait()
 }

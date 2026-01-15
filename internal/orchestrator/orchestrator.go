@@ -124,7 +124,9 @@ func (o *Orchestrator) startServiceLevel(ctx context.Context, services []string,
 					} else {
 						o.console.Warn("Port %d in use. Using %d instead.", svc.Port, newPort)
 					}
-					svc.Port = newPort
+					// Store alternate host port separately - don't overwrite original Port
+					// which is the port the app listens on inside the container
+					svc.HostPort = newPort
 					o.config.Services[serviceName] = svc
 				}
 			}
