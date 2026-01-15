@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/bobbyrathore/cbox/internal/orchestrator"
@@ -162,11 +161,10 @@ func init() {
 
 // Execute runs the root command
 func Execute() error {
-	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return err
-	}
-	return nil
+	// SilenceErrors is true, so Cobra won't print errors.
+	// CLI handlers display errors via console.Error/ErrorWithHint,
+	// so we just return the error without printing again.
+	return rootCmd.Execute()
 }
 
 // GetConfigFile returns the config file path

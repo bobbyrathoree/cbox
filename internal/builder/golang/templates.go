@@ -34,7 +34,7 @@ COPY . .
 # Build the binary
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+    CGO_ENABLED=0 GOOS=linux go build \
     -ldflags="-w -s" \
     -o /app/{{.BinaryName}} {{.EntryPoint}}
 

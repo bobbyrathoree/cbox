@@ -134,6 +134,11 @@ func validateConfig(cfg *Config) error {
 			return fmt.Errorf("service %q: cannot specify both 'path' and 'image'", name)
 		}
 
+		// Validate port number
+		if svc.Port != 0 && (svc.Port < 1 || svc.Port > 65535) {
+			return fmt.Errorf("service %q: invalid port %d (must be 1-65535)", name, svc.Port)
+		}
+
 		// Validate dependencies exist
 		for _, dep := range svc.DependsOn {
 			if _, exists := cfg.Services[dep]; !exists {

@@ -4,14 +4,25 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/bobbyrathore/cbox/internal/builder"
+	"github.com/bobbyrathore/cbox/internal/builder/golang"
+	"github.com/bobbyrathore/cbox/internal/builder/nodejs"
+	"github.com/bobbyrathore/cbox/internal/builder/python"
 	"github.com/bobbyrathore/cbox/internal/config"
 	"github.com/bobbyrathore/cbox/internal/output"
 	"github.com/spf13/cobra"
 )
+
+// DetectionResult contains info about auto-detected project
+type DetectionResult struct {
+	ProjectType string // "Node.js", "Python", "Go"
+	Framework   string // "Express", "FastAPI", "Gin", etc.
+	Extra       string // Package manager or other info
+}
 
 var (
 	buildNoCache  bool
@@ -44,14 +55,23 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 	console := output.NewWithOptions(verbose, quiet)
 
-	// Load configuration
-	cfg, err := loadConfig()
+	// Load configuration with detection info
+	cfg, detection, err := loadConfigWithDetection()
 	if err != nil {
 		console.ErrorWithHint(
 			fmt.Sprintf("Failed to load config: %s", err),
-			"Run 'cbox init' to create a cbox.yaml file",
+			getConfigErrorHint(err),
 		)
 		return err
+	}
+
+	// Show auto-detection feedback
+	if detection != nil {
+		info := detection.ProjectType
+		if detection.Framework != "" {
+			info += " (" + detection.Framework + ")"
+		}
+		console.Dim("→ Auto-detected: %s", info)
 	}
 
 	// Apply environment overrides if specified
@@ -112,6 +132,7 @@ func buildSequential(ctx context.Context, b *builder.Builder, cfg *config.Config
 			Service:     svc,
 			ProjectName: cfg.Project.Name,
 			NoCache:     buildNoCache,
+			Verbose:     verbose,
 		})
 
 		if err != nil {
@@ -154,6 +175,7 @@ func buildParallel_(ctx context.Context, b *builder.Builder, cfg *config.Config,
 				Service:     svc,
 				ProjectName: cfg.Project.Name,
 				NoCache:     buildNoCache,
+				Verbose:     verbose,
 			})
 
 			if err != nil {
@@ -178,7 +200,32 @@ func buildParallel_(ctx context.Context, b *builder.Builder, cfg *config.Config,
 	return nil
 }
 
+// getConfigErrorHint returns an appropriate hint based on error type
+func getConfigErrorHint(err error) string {
+	msg := err.Error()
+
+	switch {
+	case strings.Contains(msg, "config file not found"):
+		return "Run 'cbox init' to create a cbox.yaml file"
+	case strings.Contains(msg, "invalid YAML"):
+		return "Fix the YAML syntax in cbox.yaml"
+	case strings.Contains(msg, "validation failed"):
+		return "Fix the configuration errors in cbox.yaml"
+	case strings.Contains(msg, "environment variable"):
+		return "Set the required environment variables"
+	case strings.Contains(msg, "could not auto-detect"):
+		return "Run 'cbox init' to create a cbox.yaml file"
+	default:
+		return "Check your cbox.yaml configuration"
+	}
+}
+
 func loadConfig() (*config.Config, error) {
+	cfg, _, err := loadConfigWithDetection()
+	return cfg, err
+}
+
+func loadConfigWithDetection() (*config.Config, *DetectionResult, error) {
 	configPath := GetConfigFile()
 
 	// Check if config exists
@@ -188,16 +235,53 @@ func loadConfig() (*config.Config, error) {
 		return tryZeroConfig(wd)
 	}
 
-	return config.Load(configPath)
+	cfg, err := config.Load(configPath)
+	return cfg, nil, err
 }
 
-func tryZeroConfig(projectPath string) (*config.Config, error) {
+func tryZeroConfig(projectPath string) (*config.Config, *DetectionResult, error) {
+	cfg := config.DefaultConfig(projectPath)
+
 	// Check for Node.js project
-	if _, err := os.Stat(projectPath + "/package.json"); err == nil {
-		cfg := config.DefaultConfig(projectPath)
+	if nodejs.IsProject(projectPath) {
+		project, _ := nodejs.Detect(projectPath)
 		cfg.Services["app"] = config.DefaultNodeService("app", ".", 3000)
-		return cfg, nil
+		return cfg, &DetectionResult{
+			ProjectType: "Node.js",
+			Framework:   string(project.Framework),
+			Extra:       string(project.PackageManager),
+		}, nil
 	}
 
-	return nil, fmt.Errorf("no cbox.yaml found and could not auto-detect project type")
+	// Check for Go project
+	if golang.IsProject(projectPath) {
+		project, _ := golang.Detect(projectPath)
+		cfg.Services["app"] = config.Service{
+			Path:    ".",
+			Runtime: "go",
+			Port:    8080,
+			Command: []string{"./app"},
+		}
+		return cfg, &DetectionResult{
+			ProjectType: "Go",
+			Framework:   string(project.Framework),
+		}, nil
+	}
+
+	// Check for Python project
+	if python.IsProject(projectPath) {
+		project, _ := python.Detect(projectPath)
+		cfg.Services["app"] = config.Service{
+			Path:    ".",
+			Runtime: "python",
+			Port:    8000,
+		}
+		return cfg, &DetectionResult{
+			ProjectType: "Python",
+			Framework:   string(project.Framework),
+			Extra:       string(project.PackageManager),
+		}, nil
+	}
+
+	return nil, nil, fmt.Errorf("no cbox.yaml found and could not auto-detect project type\nSupported: Node.js (package.json), Go (go.mod), Python (requirements.txt)")
 }

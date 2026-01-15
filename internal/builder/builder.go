@@ -2,8 +2,10 @@
 package builder
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,6 +40,7 @@ type BuildOptions struct {
 	NoCache     bool
 	DevMode     bool
 	Tag         string
+	Verbose     bool // Show full Docker output
 }
 
 // BuildResult contains the result of a build.
@@ -138,6 +141,11 @@ func (b *Builder) Build(ctx context.Context, opts BuildOptions) (*BuildResult, e
 
 // generateDockerfile creates a Dockerfile for the given runtime.
 func (b *Builder) generateDockerfile(servicePath, runtime string, opts BuildOptions) (string, error) {
+	// Check if path exists before attempting detection
+	if _, err := os.Stat(servicePath); os.IsNotExist(err) {
+		return "", fmt.Errorf("service path does not exist: %s", servicePath)
+	}
+
 	switch runtime {
 	case "nodejs", "node":
 		project, err := nodejs.Detect(servicePath)
@@ -188,7 +196,7 @@ func (b *Builder) generateDockerfile(servicePath, runtime string, opts BuildOpti
 		return python.GenerateDockerfile(project, port)
 
 	default:
-		return "", fmt.Errorf("unknown runtime: %s", runtime)
+		return "", fmt.Errorf("unknown runtime: %s (supported: nodejs, python, go)", runtime)
 	}
 }
 
@@ -199,6 +207,11 @@ func (b *Builder) runBuild(ctx context.Context, contextPath, dockerfile, imageNa
 		"-f", dockerfile,
 		"-t", imageName,
 		"--load", // Load into local Docker
+	}
+
+	// Use plain progress for cleaner output (unless verbose)
+	if !opts.Verbose {
+		args = append(args, "--progress=plain")
 	}
 
 	// Add cache flags
@@ -230,10 +243,74 @@ func (b *Builder) runBuild(ctx context.Context, contextPath, dockerfile, imageNa
 	b.console.Debug("Running: docker %s", strings.Join(args, " "))
 
 	cmd := exec.CommandContext(ctx, "docker", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
 
-	return cmd.Run()
+	// Capture output when not verbose, show only on error
+	var buildOutput bytes.Buffer
+	if opts.Verbose {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+	} else {
+		cmd.Stdout = &buildOutput
+		cmd.Stderr = &cacheWarningFilter{out: &buildOutput}
+	}
+
+	err := cmd.Run()
+	if err != nil && !opts.Verbose {
+		// Show captured output on build failure
+		os.Stderr.Write(buildOutput.Bytes())
+	}
+
+	return err
+}
+
+// cacheWarningFilter filters out Docker buildx cache warnings from stderr.
+// It buffers input to handle warnings that span multiple Write calls.
+type cacheWarningFilter struct {
+	out    io.Writer
+	buffer []byte
+}
+
+func (f *cacheWarningFilter) Write(p []byte) (n int, err error) {
+	// Append to buffer
+	f.buffer = append(f.buffer, p...)
+
+	// Process complete lines
+	for {
+		idx := bytes.IndexByte(f.buffer, '\n')
+		if idx == -1 {
+			// No complete line yet, but check if buffer contains warning
+			// (some Docker output doesn't end with newline)
+			if len(f.buffer) > 500 {
+				// Buffer too large, flush it
+				if !f.shouldFilter(string(f.buffer)) {
+					f.out.Write(f.buffer)
+				}
+				f.buffer = nil
+			}
+			break
+		}
+
+		line := string(f.buffer[:idx+1])
+		f.buffer = f.buffer[idx+1:]
+
+		// Suppress Docker buildx cache warnings on first build
+		if !f.shouldFilter(line) {
+			f.out.Write([]byte(line))
+		}
+	}
+
+	return len(p), nil
+}
+
+func (f *cacheWarningFilter) shouldFilter(line string) bool {
+	// Filter various forms of cache import warnings
+	if strings.Contains(line, "local cache import") && strings.Contains(line, "not found") {
+		return true
+	}
+	if strings.Contains(line, "WARNING") && strings.Contains(line, "cache") && strings.Contains(line, "not found") {
+		return true
+	}
+	return false
 }
 
 // detectRuntime auto-detects the runtime from the project structure.
