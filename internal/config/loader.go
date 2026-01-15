@@ -139,6 +139,11 @@ func validateConfig(cfg *Config) error {
 			return fmt.Errorf("service %q: invalid port %d (must be 1-65535)", name, svc.Port)
 		}
 
+		// Validate runtime if specified
+		if svc.Runtime != "" && !isValidRuntime(svc.Runtime) {
+			return fmt.Errorf("service %q: unknown runtime %q (supported: nodejs, python, go)", name, svc.Runtime)
+		}
+
 		// Validate dependencies exist
 		for _, dep := range svc.DependsOn {
 			if _, exists := cfg.Services[dep]; !exists {
@@ -446,4 +451,18 @@ func resolveSecrets(cfg *Config, baseDir string) error {
 	}
 
 	return nil
+}
+
+// validRuntimes lists all supported runtime values.
+var validRuntimes = map[string]bool{
+	"nodejs": true,
+	"node":   true,
+	"python": true,
+	"go":     true,
+	"golang": true,
+}
+
+// isValidRuntime checks if the given runtime is supported.
+func isValidRuntime(runtime string) bool {
+	return validRuntimes[strings.ToLower(runtime)]
 }

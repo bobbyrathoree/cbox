@@ -14,11 +14,11 @@ type Framework string
 
 const (
 	FrameworkNone   Framework = ""
-	FrameworkGin    Framework = "gin"
-	FrameworkEcho   Framework = "echo"
-	FrameworkFiber  Framework = "fiber"
-	FrameworkChi    Framework = "chi"
-	FrameworkStdlib Framework = "stdlib"
+	FrameworkGin    Framework = "Gin"
+	FrameworkEcho   Framework = "Echo"
+	FrameworkFiber  Framework = "Fiber"
+	FrameworkChi    Framework = "Chi"
+	FrameworkStdlib Framework = "net/http"
 )
 
 // Project contains detected Go project information.

@@ -23,13 +23,13 @@ type Framework string
 
 const (
 	FrameworkNone    Framework = ""
-	FrameworkExpress Framework = "express"
-	FrameworkFastify Framework = "fastify"
-	FrameworkNest    Framework = "nestjs"
-	FrameworkNext    Framework = "nextjs"
-	FrameworkRemix   Framework = "remix"
-	FrameworkVite    Framework = "vite"
-	FrameworkAstro   Framework = "astro"
+	FrameworkExpress Framework = "Express"
+	FrameworkFastify Framework = "Fastify"
+	FrameworkNest    Framework = "NestJS"
+	FrameworkNext    Framework = "Next.js"
+	FrameworkRemix   Framework = "Remix"
+	FrameworkVite    Framework = "Vite"
+	FrameworkAstro   Framework = "Astro"
 )
 
 // Project contains detected Node.js project information.

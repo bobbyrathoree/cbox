@@ -23,11 +23,11 @@ const (
 type Framework string
 
 const (
-	FrameworkNone    Framework = ""
-	FrameworkFastAPI Framework = "fastapi"
-	FrameworkFlask   Framework = "flask"
-	FrameworkDjango  Framework = "django"
-	FrameworkStarlette Framework = "starlette"
+	FrameworkNone      Framework = ""
+	FrameworkFastAPI   Framework = "FastAPI"
+	FrameworkFlask     Framework = "Flask"
+	FrameworkDjango    Framework = "Django"
+	FrameworkStarlette Framework = "Starlette"
 )
 
 // Project contains detected Python project information.
