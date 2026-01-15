@@ -19,4 +19,9 @@ sandbox/
 # Coverage
 coverage.out
 coverage.html
-docs/
+
+# Test artifacts (from agents)
+my-test-app/
+test-project/
+cbox-test-project/
+/tmp/

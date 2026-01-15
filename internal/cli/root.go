@@ -14,7 +14,7 @@ import (
 
 // Build-time variables (set via ldflags)
 var (
-	Version   = "dev"
+	Version   = "v0.5.6"
 	Commit    = "unknown"
 	BuildTime = "unknown"
 )
@@ -128,6 +128,10 @@ var versionCmd = &cobra.Command{
 }
 
 func init() {
+	// Set version for --version flag (Cobra's built-in version support)
+	rootCmd.Version = Version
+	rootCmd.SetVersionTemplate("cbox {{.Version}}\n")
+
 	rootCmd.PersistentFlags().StringVarP(&configFile, "config", "c", "cbox.yaml", "config file")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 	rootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "quiet output (errors only)")

@@ -175,6 +175,24 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	console.Success("Created cbox.yaml")
+
+	// Generate .dockerignore if it doesn't exist
+	dockerignorePath := filepath.Join(absPath, ".dockerignore")
+	if _, err := os.Stat(dockerignorePath); os.IsNotExist(err) {
+		// Get the detected runtime from the service config
+		runtime := ""
+		if svc, ok := cfg.Services["app"]; ok {
+			runtime = svc.Runtime
+		}
+
+		dockerignoreContent := getDockerignoreContent(runtime)
+		if err := os.WriteFile(dockerignorePath, []byte(dockerignoreContent), 0644); err != nil {
+			console.Warn("Failed to create .dockerignore: %v", err)
+		} else {
+			console.Success("Created .dockerignore")
+		}
+	}
+
 	console.Newline()
 	console.Info("Next steps:")
 	console.Info("  1. Review and customize cbox.yaml")
@@ -182,4 +200,80 @@ func runInit(cmd *cobra.Command, args []string) error {
 	console.Info("  3. Run 'cbox up' to start all services")
 
 	return nil
+}
+
+// getDockerignoreContent returns the appropriate .dockerignore content based on runtime
+func getDockerignoreContent(runtime string) string {
+	// Common ignores for all runtimes
+	common := `# Git
+.git/
+.gitignore
+
+# Docker
+.dockerignore
+Dockerfile*
+docker-compose*
+
+# IDE and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Documentation
+*.md
+!README.md
+`
+
+	switch runtime {
+	case "nodejs":
+		return common + `
+# Node.js specific
+node_modules/
+npm-debug.log
+.npm/
+dist/
+.next/
+coverage/
+.nyc_output/
+`
+	case "python":
+		return common + `
+# Python specific
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.eggs/
+*.egg-info/
+`
+	case "go":
+		return common + `
+# Go specific
+vendor/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+`
+	default:
+		return common
+	}
 }
