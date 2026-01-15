@@ -22,6 +22,7 @@ var (
 	upBuild   bool
 	upNoDeps  bool
 	upTimeout time.Duration
+	upEnv     string
 )
 
 var upCmd = &cobra.Command{
@@ -33,9 +34,10 @@ If no services are specified, starts all services respecting
 dependency order.
 
 Examples:
-  cbox up              Start all services
-  cbox up -d           Start in background
-  cbox up api --no-deps Start without dependencies`,
+  cbox up                  Start all services
+  cbox up -d               Start in background
+  cbox up --env staging    Start with staging environment
+  cbox up api --no-deps    Start without dependencies`,
 	RunE: runUp,
 }
 
@@ -44,6 +46,7 @@ func init() {
 	upCmd.Flags().BoolVar(&upBuild, "build", false, "build images before starting")
 	upCmd.Flags().BoolVar(&upNoDeps, "no-deps", false, "don't start dependencies")
 	upCmd.Flags().DurationVar(&upTimeout, "timeout", 60*time.Second, "startup timeout")
+	upCmd.Flags().StringVarP(&upEnv, "env", "e", "", "environment to use (e.g., staging, production)")
 }
 
 func runUp(cmd *cobra.Command, args []string) error {
@@ -58,6 +61,16 @@ func runUp(cmd *cobra.Command, args []string) error {
 			"Run 'cbox init' to create a cbox.yaml file",
 		)
 		return err
+	}
+
+	// Apply environment overrides if specified
+	if upEnv != "" {
+		cfg, err = cfg.WithEnvironment(upEnv)
+		if err != nil {
+			console.Error("Failed to apply environment %q: %s", upEnv, err)
+			return err
+		}
+		console.Info("Using environment: %s", upEnv)
 	}
 
 	console.Header("Starting %s...", cfg.Project.Name)

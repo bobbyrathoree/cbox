@@ -14,7 +14,7 @@ import (
 
 // Build-time variables (set via ldflags)
 var (
-	Version   = "v0.5.6"
+	Version   = "v0.7.0"
 	Commit    = "unknown"
 	BuildTime = "unknown"
 )
@@ -156,6 +156,8 @@ func init() {
 	rootCmd.AddCommand(dashboardCmd)
 	rootCmd.AddCommand(dbCmd)
 	rootCmd.AddCommand(tunnelCmd)
+	rootCmd.AddCommand(pushCmd)
+	rootCmd.AddCommand(deployCmd)
 }
 
 // Execute runs the root command

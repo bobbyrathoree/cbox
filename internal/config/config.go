@@ -1,15 +1,21 @@
 // Package config handles cbox.yaml parsing, validation, and defaults.
 package config
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // Config represents the root cbox.yaml configuration.
 type Config struct {
-	Version  string             `yaml:"version" validate:"required,eq=1"`
-	Project  ProjectConfig      `yaml:"project"`
-	Services map[string]Service `yaml:"services" validate:"required,min=1,dive"`
-	Volumes  map[string]Volume  `yaml:"volumes,omitempty"`
-	Secrets  map[string]Secret  `yaml:"secrets,omitempty"`
+	Version      string                        `yaml:"version" validate:"required,eq=1"`
+	Project      ProjectConfig                 `yaml:"project"`
+	Services     map[string]Service            `yaml:"services" validate:"required,min=1,dive"`
+	Volumes      map[string]Volume             `yaml:"volumes,omitempty"`
+	Secrets      map[string]Secret             `yaml:"secrets,omitempty"`
+	Registry     RegistryConfig                `yaml:"registry,omitempty"`
+	Deploy       DeployConfig                  `yaml:"deploy,omitempty"`
+	Environments map[string]EnvironmentConfig  `yaml:"environments,omitempty"`
 }
 
 // ProjectConfig contains project-level settings.
@@ -52,6 +58,9 @@ type Service struct {
 
 	// Storage
 	Volumes []string `yaml:"volumes,omitempty"` // volume_name:/path or ./host:/container
+
+	// Deployment
+	Deploy *ServiceDeployConfig `yaml:"deploy,omitempty"` // Per-service deploy settings
 }
 
 // HooksConfig defines lifecycle hooks for a service.
@@ -111,6 +120,52 @@ type Secret struct {
 	File string `yaml:"file,omitempty"` // Path to secret file
 }
 
+// RegistryConfig defines where to push container images.
+type RegistryConfig struct {
+	Type       string `yaml:"type,omitempty"`       // ecr, dockerhub
+	Region     string `yaml:"region,omitempty"`     // AWS region (for ECR)
+	AccountID  string `yaml:"account_id,omitempty"` // AWS account ID (for ECR, auto-detected if empty)
+	Username   string `yaml:"username,omitempty"`   // Docker Hub username
+	Repository string `yaml:"repository,omitempty"` // Docker Hub repository prefix
+}
+
+// DeployConfig defines deployment target configuration.
+type DeployConfig struct {
+	Target string    `yaml:"target,omitempty"` // ecs (only AWS for now)
+	ECS    ECSConfig `yaml:"ecs,omitempty"`    // ECS-specific configuration
+}
+
+// ECSConfig contains AWS ECS/Fargate deployment settings.
+type ECSConfig struct {
+	Cluster          string   `yaml:"cluster,omitempty"`           // ECS cluster name
+	Region           string   `yaml:"region,omitempty"`            // AWS region
+	VpcID            string   `yaml:"vpc_id,omitempty"`            // VPC ID (optional, uses default)
+	Subnets          []string `yaml:"subnets,omitempty"`           // Subnet IDs (optional, auto-discovers)
+	SecurityGroups   []string `yaml:"security_groups,omitempty"`   // Security group IDs (optional)
+	AssignPublicIP   bool     `yaml:"assign_public_ip,omitempty"`  // Assign public IP to tasks
+	ExecutionRoleARN string   `yaml:"execution_role_arn,omitempty"` // IAM execution role
+	TaskRoleARN      string   `yaml:"task_role_arn,omitempty"`     // IAM task role
+}
+
+// ServiceDeployConfig contains per-service deployment settings.
+type ServiceDeployConfig struct {
+	CPU             int    `yaml:"cpu,omitempty"`               // Fargate CPU units (256, 512, 1024, etc.)
+	Memory          int    `yaml:"memory,omitempty"`            // Fargate memory MB
+	DesiredCount    int    `yaml:"desired_count,omitempty"`     // Number of tasks
+	HealthCheckPath string `yaml:"health_check_path,omitempty"` // Path for health checks
+}
+
+// EnvironmentConfig represents environment-specific overrides.
+type EnvironmentConfig struct {
+	Services map[string]ServiceOverrides `yaml:"services,omitempty"`
+}
+
+// ServiceOverrides contains per-service environment overrides.
+type ServiceOverrides struct {
+	Env    map[string]string    `yaml:"env,omitempty"`
+	Deploy *ServiceDeployConfig `yaml:"deploy,omitempty"`
+}
+
 // IsBuildService returns true if this service builds from source.
 func (s *Service) IsBuildService() bool {
 	return s.Path != ""
@@ -151,4 +206,121 @@ func (s *Service) GetAllPorts() []int {
 // HasHealthcheck returns true if a healthcheck is configured.
 func (s *Service) HasHealthcheck() bool {
 	return s.Healthcheck.Path != "" || s.Port != 0
+}
+
+// WithEnvironment returns a new Config with environment-specific overrides applied.
+func (c *Config) WithEnvironment(env string) (*Config, error) {
+	envConfig, ok := c.Environments[env]
+	if !ok {
+		return nil, fmt.Errorf("environment %q not defined in configuration", env)
+	}
+
+	// Deep copy the config
+	merged := c.DeepCopy()
+
+	// Apply service overrides
+	for serviceName, overrides := range envConfig.Services {
+		svc, ok := merged.Services[serviceName]
+		if !ok {
+			continue // Skip overrides for non-existent services
+		}
+
+		// Merge env vars
+		if len(overrides.Env) > 0 {
+			if svc.Env == nil {
+				svc.Env = make(map[string]string)
+			}
+			for k, v := range overrides.Env {
+				svc.Env[k] = v
+			}
+		}
+
+		// Merge deploy config
+		if overrides.Deploy != nil {
+			if svc.Deploy == nil {
+				svc.Deploy = &ServiceDeployConfig{}
+			}
+			if overrides.Deploy.CPU > 0 {
+				svc.Deploy.CPU = overrides.Deploy.CPU
+			}
+			if overrides.Deploy.Memory > 0 {
+				svc.Deploy.Memory = overrides.Deploy.Memory
+			}
+			if overrides.Deploy.DesiredCount > 0 {
+				svc.Deploy.DesiredCount = overrides.Deploy.DesiredCount
+			}
+			if overrides.Deploy.HealthCheckPath != "" {
+				svc.Deploy.HealthCheckPath = overrides.Deploy.HealthCheckPath
+			}
+		}
+
+		merged.Services[serviceName] = svc
+	}
+
+	return merged, nil
+}
+
+// DeepCopy creates a deep copy of the Config.
+func (c *Config) DeepCopy() *Config {
+	if c == nil {
+		return nil
+	}
+
+	copy := &Config{
+		Version: c.Version,
+		Project: c.Project,
+		Registry: c.Registry,
+		Deploy:   c.Deploy,
+	}
+
+	// Copy services
+	if c.Services != nil {
+		copy.Services = make(map[string]Service, len(c.Services))
+		for k, v := range c.Services {
+			svcCopy := v
+			if v.Env != nil {
+				svcCopy.Env = make(map[string]string, len(v.Env))
+				for ek, ev := range v.Env {
+					svcCopy.Env[ek] = ev
+				}
+			}
+			if v.Deploy != nil {
+				deployCopy := *v.Deploy
+				svcCopy.Deploy = &deployCopy
+			}
+			copy.Services[k] = svcCopy
+		}
+	}
+
+	// Copy volumes
+	if c.Volumes != nil {
+		copy.Volumes = make(map[string]Volume, len(c.Volumes))
+		for k, v := range c.Volumes {
+			copy.Volumes[k] = v
+		}
+	}
+
+	// Copy secrets
+	if c.Secrets != nil {
+		copy.Secrets = make(map[string]Secret, len(c.Secrets))
+		for k, v := range c.Secrets {
+			copy.Secrets[k] = v
+		}
+	}
+
+	// Copy environments
+	if c.Environments != nil {
+		copy.Environments = make(map[string]EnvironmentConfig, len(c.Environments))
+		for k, v := range c.Environments {
+			copy.Environments[k] = v
+		}
+	}
+
+	return copy
+}
+
+// HasEnvironment returns true if the named environment is defined.
+func (c *Config) HasEnvironment(env string) bool {
+	_, ok := c.Environments[env]
+	return ok
 }

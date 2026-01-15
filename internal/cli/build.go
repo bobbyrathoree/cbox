@@ -16,6 +16,7 @@ import (
 var (
 	buildNoCache  bool
 	buildParallel bool
+	buildEnv      string
 )
 
 var buildCmd = &cobra.Command{
@@ -26,15 +27,17 @@ var buildCmd = &cobra.Command{
 If no services are specified, builds all services defined in cbox.yaml.
 
 Examples:
-  cbox build           Build all services
-  cbox build api       Build specific service
-  cbox build --no-cache Build without cache`,
+  cbox build                Build all services
+  cbox build api            Build specific service
+  cbox build --no-cache     Build without cache
+  cbox build --env staging  Build with staging environment`,
 	RunE: runBuild,
 }
 
 func init() {
 	buildCmd.Flags().BoolVar(&buildNoCache, "no-cache", false, "build without cache")
 	buildCmd.Flags().BoolVar(&buildParallel, "parallel", true, "build services in parallel")
+	buildCmd.Flags().StringVarP(&buildEnv, "env", "e", "", "environment to use (e.g., staging, production)")
 }
 
 func runBuild(cmd *cobra.Command, args []string) error {
@@ -49,6 +52,16 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			"Run 'cbox init' to create a cbox.yaml file",
 		)
 		return err
+	}
+
+	// Apply environment overrides if specified
+	if buildEnv != "" {
+		cfg, err = cfg.WithEnvironment(buildEnv)
+		if err != nil {
+			console.Error("Failed to apply environment %q: %s", buildEnv, err)
+			return err
+		}
+		console.Info("Using environment: %s", buildEnv)
 	}
 
 	// Determine which services to build
