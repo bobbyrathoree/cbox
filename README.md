@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.svg" alt="cbox" width="500">
+  <img src="assets/logo.png" alt="cbox" width="500">
   <br><br>
   <strong>Container workflows that just work.</strong>
 </p>
