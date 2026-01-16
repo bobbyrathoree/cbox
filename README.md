@@ -15,7 +15,8 @@
   <a href="#quick-start">Quick Start</a> •
   <a href="#zero-config">Zero-Config</a> •
   <a href="#commands">Commands</a> •
-  <a href="#configuration">Configuration</a>
+  <a href="#configuration">Configuration</a> •
+  <a href="#troubleshooting">Troubleshooting</a>
 </p>
 
 <p align="center">
@@ -161,11 +162,45 @@ cbox build && cbox up
 
 ### Supported Runtimes
 
-| Runtime | Detection | Frameworks |
-|---------|-----------|------------|
-| **Node.js** | `package.json` | Express, Fastify, NestJS, Next.js, Remix, Vite, Astro |
-| **Python** | `requirements.txt`, `pyproject.toml` | FastAPI, Flask, Django, Starlette |
-| **Go** | `go.mod` | Gin, Echo, Fiber, Chi, net/http |
+| Runtime | Detection | Frameworks | Notes |
+|---------|-----------|------------|-------|
+| **Node.js** | `package.json` + lockfile | Express, Fastify, NestJS, Next.js, Remix, Vite, Astro | Requires `package-lock.json`, `yarn.lock`, or `pnpm-lock.yaml` |
+| **Python** | `requirements.txt`, `pyproject.toml` | FastAPI, Flask, Django, Starlette | |
+| **Go** | `go.mod` | Gin, Echo, Fiber, Chi, net/http | Builds with `CGO_ENABLED=0` (pure Go only) |
+
+### Example: Express Zero-Config
+
+```bash
+# Create a minimal Express app
+mkdir my-api && cd my-api
+
+cat > package.json << 'EOF'
+{
+  "name": "my-api",
+  "scripts": { "start": "node index.js" },
+  "dependencies": { "express": "^4.18.0" }
+}
+EOF
+
+cat > index.js << 'EOF'
+const express = require('express');
+const app = express();
+app.get('/', (req, res) => res.json({ message: 'Hello!' }));
+app.listen(3000, () => console.log('Running on :3000'));
+EOF
+
+# Generate lockfile (required for reproducible builds)
+npm install
+
+# Build and run - no config needed!
+cbox build
+# → Auto-detected: Node.js (Express)
+# ✓ Built app in 8.2s → my-api-app:latest
+
+cbox up -d
+curl http://localhost:3000
+# {"message": "Hello!"}
+```
 
 ### Example: FastAPI Zero-Config
 
@@ -182,7 +217,7 @@ def read_root():
     return {"message": "Hello, World!"}
 EOF
 
-echo "fastapi\nuvicorn" > requirements.txt
+echo -e "fastapi\nuvicorn" > requirements.txt
 
 # Build and run - no config needed!
 cbox build
@@ -214,8 +249,8 @@ curl http://localhost:8000
 |---------|-------------|
 | `cbox dev` | Start in development mode with hot reload |
 | `cbox logs [-f] [service]` | View logs (use `-f` to follow) |
-| `cbox exec <service> -- <cmd>` | Execute command in running container |
-| `cbox run <service> -- <cmd>` | Run one-off command in new container |
+| `cbox exec <service> <cmd>` | Execute command in running container |
+| `cbox run <service> <cmd>` | Run one-off command in new container |
 
 ### Monitoring & Debugging
 
@@ -232,9 +267,10 @@ curl http://localhost:8000
 
 | Command | Description |
 |---------|-------------|
-| `cbox db shell <service>` | Open database shell |
-| `cbox db snapshot <service>` | Create database snapshot |
-| `cbox db restore <service> <file>` | Restore from snapshot |
+| `cbox db shell [service]` | Open database shell |
+| `cbox db snapshot create <name>` | Create database snapshot |
+| `cbox db snapshot list` | List all snapshots |
+| `cbox db snapshot restore <name>` | Restore from snapshot |
 
 ### Deployment
 
@@ -341,6 +377,7 @@ services:
     image: postgres:16-alpine
     port: 5432
     env:
+      POSTGRES_DB: app                    # Auto-create database
       POSTGRES_PASSWORD: ${DB_PASSWORD:-secret}
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -416,11 +453,12 @@ services:
     port: 3000
     depends_on: [db]
     env:
-      DATABASE_URL: postgres://postgres:secret@db:5432/app
+      DATABASE_URL: postgres://postgres:secret@db:5432/myapp
   db:
     image: postgres:16-alpine
     port: 5432
     env:
+      POSTGRES_DB: myapp        # Creates database automatically
       POSTGRES_PASSWORD: secret
 ```
 
@@ -458,6 +496,9 @@ services:
     port: 8082
 ```
 
+> **Note:** Go services are built with `CGO_ENABLED=0` for minimal container images.
+> If you need CGO (e.g., for SQLite), provide a custom Dockerfile.
+
 ---
 
 ## Tips & Tricks
@@ -472,9 +513,10 @@ cbox deploy --env production
 ### Quick Database Access
 
 ```bash
-cbox db shell db              # Open psql/mysql shell
-cbox db snapshot db backup    # Create backup
-cbox db restore db backup.sql # Restore backup
+cbox db shell db                    # Open psql/mysql shell
+cbox db snapshot create backup      # Create snapshot named "backup"
+cbox db snapshot list               # List all snapshots
+cbox db snapshot restore backup     # Restore "backup" snapshot
 ```
 
 ### Debugging
@@ -482,7 +524,7 @@ cbox db restore db backup.sql # Restore backup
 ```bash
 cbox diagnose          # Find common problems
 cbox logs -f api       # Follow logs
-cbox exec api -- sh    # Shell into container
+cbox exec api sh       # Shell into container
 cbox top api           # View processes
 ```
 
@@ -496,8 +538,113 @@ cbox build -q
 cbox up -d && cbox wait api
 
 # Run tests
-cbox run api -- npm test
+cbox run api npm test
 ```
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+#### "could not auto-detect project type"
+
+**Cause:** No config file and no runtime detection files found.
+
+**Fix:** Ensure you have one of:
+- Node.js: `package.json` AND a lockfile (`package-lock.json`, `yarn.lock`, or `pnpm-lock.yaml`)
+- Python: `requirements.txt` or `pyproject.toml`
+- Go: `go.mod`
+
+Or run `cbox init` to create a config file.
+
+#### "unknown runtime" error
+
+**Cause:** Invalid runtime specified in config.
+
+**Fix:** Use one of: `nodejs`, `python`, `go`
+
+#### Node.js: "package-lock.json not found"
+
+**Cause:** cbox requires a lockfile for reproducible builds.
+
+**Fix:** Generate a lockfile first:
+```bash
+npm install                    # Creates package-lock.json
+# or
+yarn install                   # Creates yarn.lock
+# or
+pnpm install                   # Creates pnpm-lock.yaml
+```
+
+#### Go: Runtime panic with SQLite/CGO
+
+**Cause:** cbox builds Go with `CGO_ENABLED=0` for minimal images.
+
+**Fix:** For CGO dependencies, provide a custom Dockerfile:
+```yaml
+services:
+  app:
+    path: .
+    build:
+      dockerfile: Dockerfile  # Your custom Dockerfile with CGO_ENABLED=1
+```
+
+#### Port conflict
+
+**Cause:** Another process is using the same port.
+
+**Fix:** cbox automatically finds an alternative port and shows a warning:
+```
+⚠ Port 3000 in use. Using 3001 instead
+```
+
+Or specify a different port in your config.
+
+#### Services can't connect to each other
+
+**Cause:** Service starting before dependency is ready.
+
+**Fix:** Add `depends_on` and healthcheck:
+```yaml
+services:
+  api:
+    depends_on: [db]
+  db:
+    image: postgres:16-alpine
+    healthcheck:
+      path: /  # TCP check on primary port
+```
+
+### Diagnostic Commands
+
+```bash
+cbox doctor     # Check Docker, BuildKit, config
+cbox validate   # Validate config without running
+cbox diagnose   # Find problems with running services
+```
+
+---
+
+## Runtime-Specific Notes
+
+### Node.js
+
+- **Lockfile required:** Must have `package-lock.json`, `yarn.lock`, or `pnpm-lock.yaml`
+- **Start script:** Ensure `package.json` has a `"start"` script
+- **Supported package managers:** npm, yarn, pnpm, bun
+
+### Python
+
+- **Entry point:** Auto-detects `main.py`, `app.py`, or `wsgi.py`
+- **ASGI frameworks:** FastAPI/Starlette use uvicorn automatically
+- **WSGI frameworks:** Flask/Django use gunicorn automatically
+
+### Go
+
+- **Pure Go only:** Built with `CGO_ENABLED=0` for distroless images
+- **Multi-stage build:** Uses `gcr.io/distroless/static-debian12` (< 10MB images)
+- **Hot reload:** Dev mode uses [air](https://github.com/air-verse/air)
 
 ---
 
@@ -527,7 +674,7 @@ make build
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT License
 
 ---
 
