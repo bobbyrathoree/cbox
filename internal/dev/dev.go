@@ -27,6 +27,10 @@ type DevLoop struct {
 	console      *output.Console
 	watchers     []*Watcher
 	mu           sync.Mutex
+
+	// For signal handling and cleanup
+	startedServices []string
+	cleanupOnce     sync.Once
 }
 
 // Options contains options for dev mode.
@@ -51,16 +55,6 @@ func (d *DevLoop) Start(ctx context.Context, opts Options) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// Handle shutdown signals
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigCh
-		d.console.Newline()
-		d.console.Info("Shutting down...")
-		cancel()
-	}()
-
 	// Determine services
 	services := opts.Services
 	if len(services) == 0 {
@@ -68,6 +62,52 @@ func (d *DevLoop) Start(ctx context.Context, opts Options) error {
 			services = append(services, name)
 		}
 	}
+
+	// Store services for cleanup
+	d.mu.Lock()
+	d.startedServices = services
+	d.mu.Unlock()
+
+	// Cleanup function that ensures containers are stopped
+	cleanup := func() {
+		d.cleanupOnce.Do(func() {
+			d.console.Info("Stopping services...")
+			d.stopWatchers()
+
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer shutdownCancel()
+
+			d.orchestrator.Down(shutdownCtx, orchestrator.DownOptions{
+				Timeout: 10 * time.Second,
+			})
+		})
+	}
+
+	// Ensure cleanup runs on normal exit
+	defer cleanup()
+
+	// Set up signal handling for SIGINT (Ctrl+C) and SIGTERM
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	// Handle signals in a goroutine
+	go func() {
+		sig := <-sigCh
+		d.console.Newline()
+		d.console.Info("Received %s, shutting down...", sig)
+
+		// Stop listening for more signals to allow force quit on second Ctrl+C
+		signal.Stop(sigCh)
+
+		// Run cleanup
+		cleanup()
+
+		// Cancel context to stop other goroutines
+		cancel()
+
+		// Exit cleanly
+		os.Exit(0)
+	}()
 
 	// Start services in dev mode
 	d.console.Header("Starting %s in dev mode...", d.config.Project.Name)
@@ -101,19 +141,8 @@ func (d *DevLoop) Start(ctx context.Context, opts Options) error {
 	// Stream logs from all services
 	go d.streamAllLogs(ctx, services)
 
-	// Wait for shutdown
+	// Wait for shutdown (context cancellation)
 	<-ctx.Done()
-
-	// Cleanup
-	d.console.Info("Stopping services...")
-	d.stopWatchers()
-
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer shutdownCancel()
-
-	d.orchestrator.Down(shutdownCtx, orchestrator.DownOptions{
-		Timeout: 10 * time.Second,
-	})
 
 	return nil
 }

@@ -225,6 +225,22 @@ func (d *Docker) RemoveContainer(ctx context.Context, nameOrID string) error {
 	return nil
 }
 
+// ContainerExists checks if a container exists by name or ID.
+func (d *Docker) ContainerExists(ctx context.Context, nameOrID string) bool {
+	cmd := exec.CommandContext(ctx, "docker", "inspect", nameOrID)
+	return cmd.Run() == nil
+}
+
+// IsContainerRunning checks if a container exists and is running.
+func (d *Docker) IsContainerRunning(ctx context.Context, nameOrID string) bool {
+	cmd := exec.CommandContext(ctx, "docker", "inspect", "--format", "{{.State.Running}}", nameOrID)
+	output, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(output)) == "true"
+}
+
 // ContainerLogs streams logs from a container.
 func (d *Docker) ContainerLogs(ctx context.Context, nameOrID string, follow bool, tail int) (io.ReadCloser, error) {
 	args := []string{"logs"}

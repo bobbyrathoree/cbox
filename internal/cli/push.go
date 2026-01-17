@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/bobbyrathore/cbox/internal/builder"
@@ -10,6 +11,12 @@ import (
 	"github.com/bobbyrathore/cbox/internal/registry"
 	"github.com/spf13/cobra"
 )
+
+// pushedImage tracks a successfully pushed image with its local and remote names.
+type pushedImage struct {
+	localName  string
+	remoteName string
+}
 
 var (
 	pushTag   string
@@ -135,7 +142,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 
 	// Push each service
 	console.Newline()
-	var pushedImages []string
+	var pushedImages []pushedImage
 	for _, name := range servicesToPush {
 		svc, ok := cfg.Services[name]
 		if !ok {
@@ -159,7 +166,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 		spin := output.NewSpinner(fmt.Sprintf("Pushing %s...", name), quiet)
 		spin.Start()
 
-		localImage := fmt.Sprintf("%s-%s:latest", cfg.Project.Name, name)
+		localImage := fmt.Sprintf("%s-%s:%s", cfg.Project.Name, name, pushTag)
 		fullImage, err := reg.Push(ctx, localImage, pushTag)
 		if err != nil {
 			spin.Fail(fmt.Sprintf("Failed to push %s: %s", name, err))
@@ -167,11 +174,39 @@ func runPush(cmd *cobra.Command, args []string) error {
 		}
 
 		spin.Success(fmt.Sprintf("Pushed %s", fullImage))
-		pushedImages = append(pushedImages, fullImage)
+		pushedImages = append(pushedImages, pushedImage{
+			localName:  localImage,
+			remoteName: fullImage,
+		})
 	}
 
-	console.Newline()
-	console.Success("Pushed %d image(s)", len(pushedImages))
+	// Print summary section
+	if len(pushedImages) > 0 {
+		console.Newline()
+		for _, img := range pushedImages {
+			console.Success("Pushed %s -> %s", img.localName, img.remoteName)
+		}
+
+		// Extract registry from first pushed image (format: registry/repo:tag)
+		registryURL := ""
+		if firstImage := pushedImages[0].remoteName; firstImage != "" {
+			// Split by "/" and take all parts except the last (which is repo:tag)
+			parts := strings.Split(firstImage, "/")
+			if len(parts) > 1 {
+				registryURL = strings.Join(parts[:len(parts)-1], "/")
+			}
+		}
+
+		console.Newline()
+		console.Info("Summary:")
+		console.Info("  Images pushed: %d", len(pushedImages))
+		if registryURL != "" {
+			console.Info("  Registry: %s", registryURL)
+		}
+	} else {
+		console.Newline()
+		console.Info("No images were pushed")
+	}
 
 	return nil
 }

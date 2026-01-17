@@ -18,11 +18,12 @@ import (
 )
 
 var (
-	upDetach  bool
-	upBuild   bool
-	upNoDeps  bool
-	upTimeout time.Duration
-	upEnv     string
+	upDetach   bool
+	upBuild    bool
+	upNoDeps   bool
+	upAutoPort bool
+	upTimeout  time.Duration
+	upEnv      string
 )
 
 var upCmd = &cobra.Command{
@@ -45,6 +46,7 @@ func init() {
 	upCmd.Flags().BoolVarP(&upDetach, "detach", "d", false, "run in background")
 	upCmd.Flags().BoolVar(&upBuild, "build", false, "build images before starting")
 	upCmd.Flags().BoolVar(&upNoDeps, "no-deps", false, "don't start dependencies")
+	upCmd.Flags().BoolVar(&upAutoPort, "auto-port", false, "auto-find alternative port if configured port is in use")
 	upCmd.Flags().DurationVar(&upTimeout, "timeout", 60*time.Second, "startup timeout")
 	upCmd.Flags().StringVarP(&upEnv, "env", "e", "", "environment to use (e.g., staging, production)")
 }
@@ -84,6 +86,7 @@ func runUp(cmd *cobra.Command, args []string) error {
 		Build:    upBuild,
 		NoDeps:   upNoDeps,
 		Detach:   upDetach,
+		AutoPort: upAutoPort,
 		Timeout:  upTimeout,
 	})
 

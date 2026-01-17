@@ -38,6 +38,7 @@ type UpOptions struct {
 	NoDeps    bool     // Don't start dependencies
 	Detach    bool     // Run in background
 	DevMode   bool     // Development mode with bind mounts
+	AutoPort  bool     // Auto-find alternative port if configured port is in use
 	Timeout   time.Duration
 }
 
@@ -101,11 +102,47 @@ func (o *Orchestrator) startServiceLevel(ctx context.Context, services []string,
 			defer wg.Done()
 
 			svc := o.config.Services[serviceName]
+			containerName := fmt.Sprintf("%s_%s", o.config.Project.Name, serviceName)
 
-			// Check port availability with auto-resolution
-			if svc.Port > 0 {
+			// Check if container already exists (idempotency)
+			containerExists := o.runtime.ContainerExists(ctx, containerName)
+			containerRunning := containerExists && o.runtime.IsContainerRunning(ctx, containerName)
+
+			// Determine image name
+			imageName := svc.Image
+			needsBuild := false
+			if svc.IsBuildService() {
+				imageName = fmt.Sprintf("%s-%s:latest", o.config.Project.Name, serviceName)
+				needsBuild = opts.Build || !o.runtime.ImageExists(ctx, imageName)
+			}
+
+			// If container exists and no rebuild needed, just ensure it's running
+			if containerExists && !needsBuild {
+				if containerRunning {
+					o.console.Success("%s already running", serviceName)
+					return
+				}
+				// Container exists but not running - start it
+				o.console.Debug("Starting existing container: %s", containerName)
+				if err := o.runtime.StartContainer(ctx, containerName); err != nil {
+					errCh <- fmt.Errorf("failed to start %s: %w", serviceName, err)
+					return
+				}
+				o.console.Success("Started %s", serviceName)
+				return
+			}
+
+			// If we need to rebuild or container doesn't exist, we need port checking
+			// But only if container doesn't already exist (it owns its port)
+			if !containerExists && svc.Port > 0 {
 				if err := runtime.CheckPortAvailable(svc.Port); err != nil {
-					// Try to find an alternative port
+					// By default, fail when port is in use to avoid silent misconfiguration
+					if !opts.AutoPort {
+						errCh <- fmt.Errorf("port %d is already in use. Stop the conflicting service or use --auto-port to find an alternative", svc.Port)
+						return
+					}
+
+					// AutoPort is enabled - try to find an alternative port
 					newPort, findErr := runtime.FindAvailablePort(svc.Port+1, 10)
 					if findErr != nil {
 						pid, _ := runtime.FindProcessOnPort(svc.Port)
@@ -131,31 +168,25 @@ func (o *Orchestrator) startServiceLevel(ctx context.Context, services []string,
 				}
 			}
 
-			// Determine image name
-			imageName := svc.Image
-			if svc.IsBuildService() {
-				imageName = fmt.Sprintf("%s-%s:latest", o.config.Project.Name, serviceName)
+			// Build if needed
+			if svc.IsBuildService() && needsBuild {
+				spin := output.NewSpinner(fmt.Sprintf("Building %s...", serviceName), false)
+				spin.Start()
 
-				// Build if requested or if image doesn't exist
-				if opts.Build || !o.runtime.ImageExists(ctx, imageName) {
-					spin := output.NewSpinner(fmt.Sprintf("Building %s...", serviceName), false)
-					spin.Start()
+				_, err := o.builder.Build(ctx, builder.BuildOptions{
+					ServiceName: serviceName,
+					Service:     svc,
+					ProjectName: o.config.Project.Name,
+					DevMode:     opts.DevMode,
+				})
 
-					_, err := o.builder.Build(ctx, builder.BuildOptions{
-						ServiceName: serviceName,
-						Service:     svc,
-						ProjectName: o.config.Project.Name,
-						DevMode:     opts.DevMode,
-					})
-
-					if err != nil {
-						spin.Fail(fmt.Sprintf("Failed to build %s", serviceName))
-						errCh <- fmt.Errorf("failed to build %s: %w", serviceName, err)
-						return
-					}
-					spin.Success(fmt.Sprintf("Built %s", serviceName))
+				if err != nil {
+					spin.Fail(fmt.Sprintf("Failed to build %s", serviceName))
+					errCh <- fmt.Errorf("failed to build %s: %w", serviceName, err)
+					return
 				}
-			} else {
+				spin.Success(fmt.Sprintf("Built %s", serviceName))
+			} else if !svc.IsBuildService() {
 				// Pull image if it doesn't exist
 				if !o.runtime.ImageExists(ctx, imageName) {
 					spin := output.NewSpinner(fmt.Sprintf("Pulling %s...", imageName), false)
@@ -170,9 +201,12 @@ func (o *Orchestrator) startServiceLevel(ctx context.Context, services []string,
 				}
 			}
 
-			// Remove existing container if it exists
-			containerName := fmt.Sprintf("%s_%s", o.config.Project.Name, serviceName)
-			o.runtime.RemoveContainer(ctx, containerName)
+			// Remove existing container (we're recreating due to rebuild)
+			if containerExists {
+				o.console.Debug("Recreating container: %s", containerName)
+				o.runtime.StopContainer(ctx, containerName, 10*time.Second)
+				o.runtime.RemoveContainer(ctx, containerName)
+			}
 
 			// Create container config
 			containerCfg := runtime.ContainerConfigFromService(
