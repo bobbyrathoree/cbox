@@ -242,12 +242,30 @@ func loadConfig() (*config.Config, error) {
 	return cfg, err
 }
 
+// loadConfigRaw loads the config file WITHOUT applying stored environment.
+// Use this for env commands (list, show, switch) that need to work even when
+// the stored environment has unset variables.
+func loadConfigRaw() (*config.Config, error) {
+	configPath := GetConfigFile()
+
+	if !config.Exists(configPath) {
+		return nil, fmt.Errorf("config file not found: %s", configPath)
+	}
+
+	return config.Load(configPath)
+}
+
 func loadConfigWithDetection() (*config.Config, *DetectionResult, error) {
 	configPath := GetConfigFile()
 
 	// Check if config exists
 	if !config.Exists(configPath) {
-		// Try zero-config mode
+		// If user explicitly specified --config, don't fall through to zero-config
+		if configFile != "cbox.yaml" {
+			return nil, nil, fmt.Errorf("config file not found: %s", configPath)
+		}
+
+		// Try zero-config mode only for default config
 		wd, _ := os.Getwd()
 		return tryZeroConfig(wd)
 	}

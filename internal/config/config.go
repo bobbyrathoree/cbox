@@ -209,6 +209,8 @@ func (s *Service) HasHealthcheck() bool {
 }
 
 // WithEnvironment returns a new Config with environment-specific overrides applied.
+// Environment variable substitution is performed lazily here (not at config load time)
+// so that unset variables in unused environments don't cause failures.
 func (c *Config) WithEnvironment(env string) (*Config, error) {
 	envConfig, ok := c.Environments[env]
 	if !ok {
@@ -225,13 +227,18 @@ func (c *Config) WithEnvironment(env string) (*Config, error) {
 			continue // Skip overrides for non-existent services
 		}
 
-		// Merge env vars
+		// Merge env vars with lazy substitution
 		if len(overrides.Env) > 0 {
 			if svc.Env == nil {
 				svc.Env = make(map[string]string)
 			}
 			for k, v := range overrides.Env {
-				svc.Env[k] = v
+				// Substitute env vars NOW (lazy evaluation)
+				expanded, err := ExpandEnvString(v)
+				if err != nil {
+					return nil, fmt.Errorf("service %q env %q: %w", serviceName, k, err)
+				}
+				svc.Env[k] = expanded
 			}
 		}
 

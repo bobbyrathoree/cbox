@@ -68,6 +68,20 @@ Example:
 	RunE: runEnvCurrent,
 }
 
+var envShowCmd = &cobra.Command{
+	Use:   "show <environment>",
+	Short: "Show environment configuration",
+	Long: `Show the configuration overrides for a specific environment.
+
+Displays what settings will change when you switch to this environment.
+
+Examples:
+  cbox env show staging      Show staging environment overrides
+  cbox env show production   Show production environment overrides`,
+	Args: cobra.ExactArgs(1),
+	RunE: runEnvShow,
+}
+
 var envClearFlag bool
 
 func init() {
@@ -76,12 +90,13 @@ func init() {
 	envCmd.AddCommand(envListCmd)
 	envCmd.AddCommand(envSwitchCmd)
 	envCmd.AddCommand(envCurrentCmd)
+	envCmd.AddCommand(envShowCmd)
 }
 
 func runEnvList(cmd *cobra.Command, args []string) error {
 	console := output.NewWithOptions(verbose, quiet)
 
-	cfg, err := loadConfig()
+	cfg, err := loadConfigRaw()
 	if err != nil {
 		console.ErrorWithHint(
 			fmt.Sprintf("Failed to load config: %s", err),
@@ -160,7 +175,8 @@ func runEnvSwitch(cmd *cobra.Command, args []string) error {
 	envName := args[0]
 
 	// Validate environment exists in config
-	cfg, err := loadConfig()
+	// Use loadConfigRaw() to avoid failing when stored env has unset vars
+	cfg, err := loadConfigRaw()
 	if err != nil {
 		console.ErrorWithHint(
 			fmt.Sprintf("Failed to load config: %s", err),
@@ -204,9 +220,19 @@ func runEnvSwitch(cmd *cobra.Command, args []string) error {
 }
 
 func runEnvCurrent(cmd *cobra.Command, args []string) error {
-	console := output.NewWithOptions(verbose, quiet)
-
 	currentEnv := cboxctx.GetCurrentEnv()
+
+	// In quiet mode, just output the env name (for scripting)
+	// If no env set, output nothing (empty = defaults)
+	if quiet {
+		if currentEnv != "" {
+			fmt.Println(currentEnv)
+		}
+		return nil
+	}
+
+	// Normal mode - verbose output
+	console := output.NewWithOptions(verbose, quiet)
 
 	if currentEnv == "" {
 		console.Info("No environment set (using defaults)")
@@ -215,6 +241,88 @@ func runEnvCurrent(cmd *cobra.Command, args []string) error {
 		console.Dim("List available:  cbox env list")
 	} else {
 		console.Info("Current environment: %s", currentEnv)
+	}
+
+	return nil
+}
+
+func runEnvShow(cmd *cobra.Command, args []string) error {
+	console := output.NewWithOptions(verbose, quiet)
+	envName := args[0]
+
+	// Use loadConfigRaw() to avoid failing when stored env has unset vars
+	cfg, err := loadConfigRaw()
+	if err != nil {
+		console.ErrorWithHint(
+			fmt.Sprintf("Failed to load config: %s", err),
+			"Run 'cbox init' to create a cbox.yaml file",
+		)
+		return err
+	}
+
+	if !cfg.HasEnvironment(envName) {
+		// List available environments
+		var available []string
+		for name := range cfg.Environments {
+			available = append(available, name)
+		}
+		sort.Strings(available)
+
+		hint := "No environments defined in cbox.yaml"
+		if len(available) > 0 {
+			hint = fmt.Sprintf("Available environments: %v", available)
+		}
+
+		console.ErrorWithHint(
+			fmt.Sprintf("Environment '%s' not found", envName),
+			hint,
+		)
+		return fmt.Errorf("environment '%s' not found", envName)
+	}
+
+	envConfig := cfg.Environments[envName]
+
+	console.Header("Environment: %s", envName)
+	console.Newline()
+
+	if len(envConfig.Services) == 0 {
+		console.Dim("  No service overrides defined")
+		return nil
+	}
+
+	for svcName, overrides := range envConfig.Services {
+		console.Info("  Service: %s", svcName)
+
+		if len(overrides.Env) > 0 {
+			console.Dim("    Environment variables:")
+			// Sort keys for consistent output
+			var keys []string
+			for k := range overrides.Env {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				// Show raw value (may contain ${VAR})
+				console.Info("      %s: %s", k, overrides.Env[k])
+			}
+		}
+
+		if overrides.Deploy != nil {
+			console.Dim("    Deploy overrides:")
+			if overrides.Deploy.CPU > 0 {
+				console.Info("      cpu: %d", overrides.Deploy.CPU)
+			}
+			if overrides.Deploy.Memory > 0 {
+				console.Info("      memory: %d", overrides.Deploy.Memory)
+			}
+			if overrides.Deploy.DesiredCount > 0 {
+				console.Info("      replicas: %d", overrides.Deploy.DesiredCount)
+			}
+			if overrides.Deploy.HealthCheckPath != "" {
+				console.Info("      health_check_path: %s", overrides.Deploy.HealthCheckPath)
+			}
+		}
+		console.Newline()
 	}
 
 	return nil

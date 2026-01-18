@@ -39,7 +39,8 @@ func Parse(data []byte, baseDir string) (*Config, error) {
 	}
 
 	// Substitute environment variables (${VAR} syntax)
-	if err := substituteEnvVars(&cfg); err != nil {
+	// Skip the Environments section - those are substituted lazily when WithEnvironment() is called
+	if err := substituteEnvVarsExcludeEnvironments(&cfg); err != nil {
 		return nil, fmt.Errorf("env substitution failed: %w", err)
 	}
 
@@ -264,6 +265,21 @@ func substituteEnvVars(cfg *Config) error {
 	return substituteEnvVarsInValue(reflect.ValueOf(cfg))
 }
 
+// substituteEnvVarsExcludeEnvironments substitutes env vars but skips the Environments section.
+// This allows lazy evaluation of environment-specific variables when WithEnvironment() is called.
+func substituteEnvVarsExcludeEnvironments(cfg *Config) error {
+	// Temporarily store and nil out Environments
+	savedEnvs := cfg.Environments
+	cfg.Environments = nil
+
+	// Substitute in everything except environments
+	err := substituteEnvVarsInValue(reflect.ValueOf(cfg))
+
+	// Restore environments (unsubstituted)
+	cfg.Environments = savedEnvs
+	return err
+}
+
 // substituteEnvVarsInValue recursively processes a reflect.Value for env substitution.
 func substituteEnvVarsInValue(v reflect.Value) error {
 	switch v.Kind() {
@@ -282,7 +298,7 @@ func substituteEnvVarsInValue(v reflect.Value) error {
 			val := v.MapIndex(key)
 			// For map values, we need special handling
 			if val.Kind() == reflect.String {
-				newVal, err := expandEnvString(val.String())
+				newVal, err := ExpandEnvString(val.String())
 				if err != nil {
 					return err
 				}
@@ -301,7 +317,7 @@ func substituteEnvVarsInValue(v reflect.Value) error {
 		for i := 0; i < v.Len(); i++ {
 			elem := v.Index(i)
 			if elem.Kind() == reflect.String && elem.CanSet() {
-				newVal, err := expandEnvString(elem.String())
+				newVal, err := ExpandEnvString(elem.String())
 				if err != nil {
 					return err
 				}
@@ -314,7 +330,7 @@ func substituteEnvVarsInValue(v reflect.Value) error {
 		}
 	case reflect.String:
 		if v.CanSet() {
-			newVal, err := expandEnvString(v.String())
+			newVal, err := ExpandEnvString(v.String())
 			if err != nil {
 				return err
 			}
@@ -324,8 +340,8 @@ func substituteEnvVarsInValue(v reflect.Value) error {
 	return nil
 }
 
-// expandEnvString replaces ${VAR} and ${VAR:-default} in a string.
-func expandEnvString(s string) (string, error) {
+// ExpandEnvString replaces ${VAR} and ${VAR:-default} in a string.
+func ExpandEnvString(s string) (string, error) {
 	var lastErr error
 	result := envVarPattern.ReplaceAllStringFunc(s, func(match string) string {
 		submatches := envVarPattern.FindStringSubmatch(match)
