@@ -157,6 +157,8 @@ func init() {
 	rootCmd.AddCommand(tunnelCmd)
 	rootCmd.AddCommand(pushCmd)
 	rootCmd.AddCommand(deployCmd)
+	rootCmd.AddCommand(composeCmd)
+	rootCmd.AddCommand(envCmd)
 }
 
 // Execute runs the root command

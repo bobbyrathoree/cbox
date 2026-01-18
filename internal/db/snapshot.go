@@ -17,6 +17,7 @@ import (
 type SnapshotMeta struct {
 	Name      string    `json:"name"`
 	DBType    string    `json:"db_type"`
+	DBName    string    `json:"db_name,omitempty"` // Database name (e.g., POSTGRES_DB)
 	Service   string    `json:"service"`
 	Project   string    `json:"project"`
 	Created   time.Time `json:"created"`
@@ -43,7 +44,7 @@ func (m *SnapshotManager) snapshotDir(project, service, name string) string {
 }
 
 // Create creates a new snapshot
-func (m *SnapshotManager) Create(ctx context.Context, project, service, container, name string, dbType DBType) error {
+func (m *SnapshotManager) Create(ctx context.Context, project, service, container, name string, dbType DBType, dbName string) error {
 	if dbType == Unknown || dbType == Redis {
 		return fmt.Errorf("snapshot not supported for %s", dbType)
 	}
@@ -54,7 +55,7 @@ func (m *SnapshotManager) Create(ctx context.Context, project, service, containe
 	}
 
 	// Get dump command
-	dumpCmd := DumpCommand(dbType)
+	dumpCmd := DumpCommand(dbType, dbName)
 	if dumpCmd == nil {
 		return fmt.Errorf("dump not supported for %s", dbType)
 	}
@@ -108,6 +109,7 @@ func (m *SnapshotManager) Create(ctx context.Context, project, service, containe
 	meta := SnapshotMeta{
 		Name:      name,
 		DBType:    dbType.String(),
+		DBName:    dbName,
 		Service:   service,
 		Project:   project,
 		Created:   time.Now(),
@@ -132,14 +134,23 @@ func (m *SnapshotManager) Restore(ctx context.Context, project, service, contain
 
 	dir := m.snapshotDir(project, service, name)
 
-	// Check if snapshot exists
+	// Check if snapshot exists and read metadata
 	metaFile := filepath.Join(dir, "meta.json")
-	if _, err := os.Stat(metaFile); os.IsNotExist(err) {
-		return fmt.Errorf("snapshot '%s' not found", name)
+	metaData, err := os.ReadFile(metaFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("snapshot '%s' not found", name)
+		}
+		return fmt.Errorf("failed to read snapshot metadata: %w", err)
 	}
 
-	// Get restore command
-	restoreCmd := RestoreCommand(dbType)
+	var meta SnapshotMeta
+	if err := json.Unmarshal(metaData, &meta); err != nil {
+		return fmt.Errorf("failed to parse snapshot metadata: %w", err)
+	}
+
+	// Get restore command with the stored database name
+	restoreCmd := RestoreCommand(dbType, meta.DBName)
 	if restoreCmd == nil {
 		return fmt.Errorf("restore not supported for %s", dbType)
 	}

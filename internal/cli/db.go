@@ -203,11 +203,18 @@ func runSnapshotCreate(cmd *cobra.Command, args []string) error {
 
 	console.Info("Creating snapshot '%s' from %s (%s)...", snapshotName, serviceName, dbType)
 
+	// Extract database name from service environment
+	svc := cfg.Services[serviceName]
+	dbName := extractDBName(svc.Env, dbType)
+	if dbName != "" {
+		console.Debug("Using database: %s", dbName)
+	}
+
 	mgr := db.NewSnapshotManager()
 	spin := output.NewSpinner(fmt.Sprintf("Dumping %s...", dbType), false)
 	spin.Start()
 
-	if err := mgr.Create(ctx, cfg.Project.Name, serviceName, containerName, snapshotName, dbType); err != nil {
+	if err := mgr.Create(ctx, cfg.Project.Name, serviceName, containerName, snapshotName, dbType, dbName); err != nil {
 		spin.Fail("Failed to create snapshot")
 		return err
 	}
@@ -367,6 +374,25 @@ func runSnapshotDelete(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// extractDBName extracts the database name from service environment variables
+func extractDBName(env map[string]string, dbType db.DBType) string {
+	switch dbType {
+	case db.Postgres:
+		if name, ok := env["POSTGRES_DB"]; ok {
+			return name
+		}
+	case db.MySQL:
+		if name, ok := env["MYSQL_DATABASE"]; ok {
+			return name
+		}
+	case db.MongoDB:
+		if name, ok := env["MONGO_INITDB_DATABASE"]; ok {
+			return name
+		}
+	}
+	return ""
 }
 
 // findDBService finds the database service to use

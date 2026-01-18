@@ -107,7 +107,14 @@ func (d *Docker) CreateNetwork(ctx context.Context, name string) error {
 func (d *Docker) RemoveNetwork(ctx context.Context, name string) error {
 	d.console.Debug("Removing network: %s", name)
 	cmd := exec.CommandContext(ctx, "docker", "network", "rm", name)
-	cmd.Run() // Ignore errors - network might not exist
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// Ignore "not found" errors - network might not exist
+		if !strings.Contains(string(output), "No such network") &&
+			!strings.Contains(string(output), "not found") {
+			return fmt.Errorf("failed to remove network %s: %s", name, strings.TrimSpace(string(output)))
+		}
+	}
 	return nil
 }
 
@@ -201,7 +208,15 @@ func (d *Docker) StopContainer(ctx context.Context, nameOrID string, timeout tim
 	d.console.Debug("Stopping container: %s", nameOrID)
 	args := []string{"stop", "-t", strconv.Itoa(int(timeout.Seconds())), nameOrID}
 	cmd := exec.CommandContext(ctx, "docker", args...)
-	cmd.Run() // Ignore errors - container might not be running
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// Ignore "not found" or "not running" errors
+		outStr := string(output)
+		if !strings.Contains(outStr, "No such container") &&
+			!strings.Contains(outStr, "is not running") {
+			return fmt.Errorf("failed to stop container %s: %s", nameOrID, strings.TrimSpace(outStr))
+		}
+	}
 	return nil
 }
 
@@ -221,7 +236,13 @@ func (d *Docker) RestartContainer(ctx context.Context, nameOrID string, timeout 
 func (d *Docker) RemoveContainer(ctx context.Context, nameOrID string) error {
 	d.console.Debug("Removing container: %s", nameOrID)
 	cmd := exec.CommandContext(ctx, "docker", "rm", "-f", nameOrID)
-	cmd.Run() // Ignore errors - container might not exist
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// Ignore "not found" errors - container might not exist
+		if !strings.Contains(string(output), "No such container") {
+			return fmt.Errorf("failed to remove container %s: %s", nameOrID, strings.TrimSpace(string(output)))
+		}
+	}
 	return nil
 }
 
@@ -445,7 +466,13 @@ func (d *Docker) CreateVolume(ctx context.Context, name string) error {
 func (d *Docker) RemoveVolume(ctx context.Context, name string) error {
 	d.console.Debug("Removing volume: %s", name)
 	cmd := exec.CommandContext(ctx, "docker", "volume", "rm", name)
-	cmd.Run() // Ignore errors - volume might not exist
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// Ignore "not found" errors - volume might not exist
+		if !strings.Contains(string(output), "No such volume") {
+			return fmt.Errorf("failed to remove volume %s: %s", name, strings.TrimSpace(string(output)))
+		}
+	}
 	return nil
 }
 

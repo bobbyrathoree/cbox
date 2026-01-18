@@ -314,8 +314,12 @@ func (o *Orchestrator) Down(ctx context.Context, opts DownOptions) error {
 		if timeout == 0 {
 			timeout = 10 * time.Second
 		}
-		o.runtime.StopContainer(ctx, c.Name, timeout)
-		o.runtime.RemoveContainer(ctx, c.Name)
+		if err := o.runtime.StopContainer(ctx, c.Name, timeout); err != nil {
+			o.console.Warn("Failed to stop %s: %s", c.Name, err)
+		}
+		if err := o.runtime.RemoveContainer(ctx, c.Name); err != nil {
+			o.console.Warn("Failed to remove %s: %s", c.Name, err)
+		}
 		o.console.Success("Stopped %s", c.Name)
 	}
 
@@ -323,13 +327,18 @@ func (o *Orchestrator) Down(ctx context.Context, opts DownOptions) error {
 	if opts.Volumes {
 		for volName := range o.config.Volumes {
 			prefixedName := fmt.Sprintf("%s_%s", o.config.Project.Name, volName)
-			o.runtime.RemoveVolume(ctx, prefixedName)
-			o.console.Success("Removed volume %s", volName)
+			if err := o.runtime.RemoveVolume(ctx, prefixedName); err != nil {
+				o.console.Warn("Failed to remove volume %s: %s", volName, err)
+			} else {
+				o.console.Success("Removed volume %s", volName)
+			}
 		}
 	}
 
 	// Remove network
-	o.runtime.RemoveNetwork(ctx, networkName)
+	if err := o.runtime.RemoveNetwork(ctx, networkName); err != nil {
+		o.console.Warn("Failed to remove network: %s", err)
+	}
 
 	return nil
 }

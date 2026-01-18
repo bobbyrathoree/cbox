@@ -13,6 +13,7 @@ import (
 	"github.com/bobbyrathore/cbox/internal/builder/nodejs"
 	"github.com/bobbyrathore/cbox/internal/builder/python"
 	"github.com/bobbyrathore/cbox/internal/config"
+	cboxctx "github.com/bobbyrathore/cbox/internal/context"
 	"github.com/bobbyrathore/cbox/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -22,6 +23,7 @@ type DetectionResult struct {
 	ProjectType string // "Node.js", "Python", "Go"
 	Framework   string // "Express", "FastAPI", "Gin", etc.
 	Extra       string // Package manager or other info
+	Environment string // Applied environment (if any)
 }
 
 var (
@@ -67,19 +69,34 @@ func runBuild(cmd *cobra.Command, args []string) error {
 
 	// Show auto-detection feedback
 	if detection != nil {
-		info := detection.ProjectType
-		if detection.Framework != "" {
-			info += " (" + detection.Framework + ")"
+		if detection.ProjectType != "" {
+			info := detection.ProjectType
+			if detection.Framework != "" {
+				info += " (" + detection.Framework + ")"
+			}
+			console.Dim("→ Auto-detected: %s", info)
 		}
-		console.Dim("→ Auto-detected: %s", info)
+		// Show stored environment if applied
+		if detection.Environment != "" && buildEnv == "" {
+			console.Dim("→ Using environment: %s", detection.Environment)
+		}
 	}
 
-	// Apply environment overrides if specified
+	// Apply environment overrides if explicitly specified (overrides stored env)
 	if buildEnv != "" {
-		cfg, err = cfg.WithEnvironment(buildEnv)
-		if err != nil {
-			console.Error("Failed to apply environment %q: %s", buildEnv, err)
-			return err
+		// Only apply if different from already-applied stored env
+		appliedEnv := ""
+		if detection != nil {
+			appliedEnv = detection.Environment
+		}
+		if buildEnv != appliedEnv {
+			// Need to reload and apply the explicit env
+			baseCfg, _ := config.Load(GetConfigFile())
+			cfg, err = baseCfg.WithEnvironment(buildEnv)
+			if err != nil {
+				console.Error("Failed to apply environment %q: %s", buildEnv, err)
+				return err
+			}
 		}
 		console.Info("Using environment: %s", buildEnv)
 	}
@@ -236,7 +253,25 @@ func loadConfigWithDetection() (*config.Config, *DetectionResult, error) {
 	}
 
 	cfg, err := config.Load(configPath)
-	return cfg, nil, err
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Check for stored environment context
+	detection := &DetectionResult{}
+	if storedEnv := cboxctx.GetCurrentEnv(); storedEnv != "" {
+		if cfg.HasEnvironment(storedEnv) {
+			cfg, err = cfg.WithEnvironment(storedEnv)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to apply stored environment %q: %w", storedEnv, err)
+			}
+			detection.Environment = storedEnv
+		}
+		// If environment doesn't exist in config, silently ignore
+		// (user may have switched configs or removed the environment)
+	}
+
+	return cfg, detection, nil
 }
 
 func tryZeroConfig(projectPath string) (*config.Config, *DetectionResult, error) {

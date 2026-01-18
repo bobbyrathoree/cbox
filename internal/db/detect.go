@@ -66,11 +66,17 @@ func ShellCommand(dbType DBType) []string {
 }
 
 // DumpCommand returns the command to dump a database
-func DumpCommand(dbType DBType) []string {
+func DumpCommand(dbType DBType, dbName string) []string {
 	switch dbType {
 	case Postgres:
+		if dbName != "" {
+			return []string{"pg_dump", "-U", "postgres", "-Fc", "-d", dbName}
+		}
 		return []string{"pg_dump", "-U", "postgres", "-Fc"}
 	case MySQL:
+		if dbName != "" {
+			return []string{"mysqldump", "-u", "root", dbName}
+		}
 		return []string{"mysqldump", "-u", "root", "--all-databases"}
 	case MongoDB:
 		return []string{"mongodump", "--archive", "--gzip"}
@@ -82,11 +88,18 @@ func DumpCommand(dbType DBType) []string {
 }
 
 // RestoreCommand returns the command to restore a database
-func RestoreCommand(dbType DBType) []string {
+func RestoreCommand(dbType DBType, dbName string) []string {
 	switch dbType {
 	case Postgres:
-		return []string{"pg_restore", "-U", "postgres", "-d", "postgres", "-c"}
+		targetDB := "postgres"
+		if dbName != "" {
+			targetDB = dbName
+		}
+		return []string{"pg_restore", "-U", "postgres", "-d", targetDB, "-c"}
 	case MySQL:
+		if dbName != "" {
+			return []string{"mysql", "-u", "root", dbName}
+		}
 		return []string{"mysql", "-u", "root"}
 	case MongoDB:
 		return []string{"mongorestore", "--archive", "--gzip", "--drop"}
