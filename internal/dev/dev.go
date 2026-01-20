@@ -248,6 +248,7 @@ func (d *DevLoop) rebuildAndRestart(ctx context.Context, svcName string, svc con
 		networkName,
 		imageName,
 		true, // dev mode
+		"",   // no namespace in dev mode
 	)
 
 	_, err = d.runtime.CreateContainer(ctx, containerCfg)

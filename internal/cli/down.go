@@ -47,8 +47,15 @@ func runDown(cmd *cobra.Command, args []string) error {
 
 	console.Header("Stopping %s...", cfg.Project.Name)
 
-	// Create orchestrator
-	orch := orchestrator.New(cfg, console)
+	// Create orchestrator (with namespace if specified)
+	var orch *orchestrator.Orchestrator
+	ns := GetNamespace()
+	if ns != "" {
+		console.Info("Using namespace: %s", ns)
+		orch = orchestrator.NewWithNamespace(cfg, console, ns)
+	} else {
+		orch = orchestrator.New(cfg, console)
+	}
 
 	// Stop services
 	err = orch.Down(ctx, orchestrator.DownOptions{

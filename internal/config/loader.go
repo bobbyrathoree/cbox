@@ -159,6 +159,13 @@ func validateConfig(cfg *Config) error {
 			}
 		}
 
+		// Validate resource limits
+		if svc.Resources != nil {
+			if err := validateResourceConfig(svc.Resources, name); err != nil {
+				return err
+			}
+		}
+
 		// Validate volume references
 		for _, vol := range svc.Volumes {
 			// Skip bind mounts (start with ./ or /)
@@ -481,4 +488,27 @@ var validRuntimes = map[string]bool{
 // isValidRuntime checks if the given runtime is supported.
 func isValidRuntime(runtime string) bool {
 	return validRuntimes[strings.ToLower(runtime)]
+}
+
+// memoryPattern matches Docker memory format: number followed by b, k, m, or g (case insensitive)
+var memoryPattern = regexp.MustCompile(`^[0-9]+[bBkKmMgG]?$`)
+
+// cpuPattern matches positive decimal numbers (e.g., "0.5", "2", "1.5")
+var cpuPattern = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?$`)
+
+// validateResourceConfig validates the resource limits configuration.
+func validateResourceConfig(res *ResourceConfig, serviceName string) error {
+	if res.Memory != "" {
+		if !memoryPattern.MatchString(res.Memory) {
+			return fmt.Errorf("service %q: invalid memory format %q (use Docker format: 512m, 1g, 2048m)", serviceName, res.Memory)
+		}
+	}
+
+	if res.CPUs != "" {
+		if !cpuPattern.MatchString(res.CPUs) {
+			return fmt.Errorf("service %q: invalid cpus format %q (use positive number: \"0.5\", \"2\")", serviceName, res.CPUs)
+		}
+	}
+
+	return nil
 }

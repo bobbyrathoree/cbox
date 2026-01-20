@@ -9,6 +9,17 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// EnvListResultJSON is the data payload for env list JSON output
+type EnvListResultJSON struct {
+	Environments []string `json:"environments"`
+	Current      string   `json:"current"`
+}
+
+// EnvCurrentResultJSON is the data payload for env current JSON output
+type EnvCurrentResultJSON struct {
+	Environment string `json:"environment"`
+}
+
 var envCmd = &cobra.Command{
 	Use:   "env",
 	Short: "Manage environment context",
@@ -94,10 +105,14 @@ func init() {
 }
 
 func runEnvList(cmd *cobra.Command, args []string) error {
-	console := output.NewWithOptions(verbose, quiet)
+	console := output.NewWithOutputMode(verbose, quiet, outputFormat)
 
 	cfg, err := loadConfigRaw()
 	if err != nil {
+		if console.IsJSONMode() {
+			console.EmitJSONError("env list", err)
+			return nil
+		}
 		console.ErrorWithHint(
 			fmt.Sprintf("Failed to load config: %s", err),
 			"Run 'cbox init' to create a cbox.yaml file",
@@ -105,6 +120,26 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	currentEnv := cboxctx.GetCurrentEnv()
+
+	// Sort environment names for consistent output
+	var envNames []string
+	for name := range cfg.Environments {
+		envNames = append(envNames, name)
+	}
+	sort.Strings(envNames)
+
+	// JSON output mode
+	if console.IsJSONMode() {
+		result := EnvListResultJSON{
+			Environments: envNames,
+			Current:      currentEnv,
+		}
+		console.EmitJSON("env list", result, nil)
+		return nil
+	}
+
+	// Text output mode
 	if len(cfg.Environments) == 0 {
 		console.Info("No environments defined in cbox.yaml")
 		console.Newline()
@@ -124,17 +159,8 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	currentEnv := cboxctx.GetCurrentEnv()
-
 	console.Header("Environments for %s", cfg.Project.Name)
 	console.Newline()
-
-	// Sort environment names for consistent output
-	var envNames []string
-	for name := range cfg.Environments {
-		envNames = append(envNames, name)
-	}
-	sort.Strings(envNames)
 
 	for _, name := range envNames {
 		if name == currentEnv {
@@ -221,6 +247,16 @@ func runEnvSwitch(cmd *cobra.Command, args []string) error {
 
 func runEnvCurrent(cmd *cobra.Command, args []string) error {
 	currentEnv := cboxctx.GetCurrentEnv()
+	console := output.NewWithOutputMode(verbose, quiet, outputFormat)
+
+	// JSON output mode
+	if console.IsJSONMode() {
+		result := EnvCurrentResultJSON{
+			Environment: currentEnv,
+		}
+		console.EmitJSON("env current", result, nil)
+		return nil
+	}
 
 	// In quiet mode, just output the env name (for scripting)
 	// If no env set, output nothing (empty = defaults)
@@ -232,8 +268,6 @@ func runEnvCurrent(cmd *cobra.Command, args []string) error {
 	}
 
 	// Normal mode - verbose output
-	console := output.NewWithOptions(verbose, quiet)
-
 	if currentEnv == "" {
 		console.Info("No environment set (using defaults)")
 		console.Newline()

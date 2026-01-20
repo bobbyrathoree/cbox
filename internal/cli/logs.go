@@ -69,6 +69,13 @@ func runLogs(cmd *cobra.Command, args []string) error {
 
 	docker := runtime.New(console)
 
+	// Get namespace for container name resolution
+	ns := GetNamespace()
+	projectPrefix := cfg.Project.Name
+	if ns != "" {
+		projectPrefix = fmt.Sprintf("%s-%s", ns, cfg.Project.Name)
+	}
+
 	// Determine which services to show logs from
 	services := args
 	if len(services) == 0 {
@@ -79,7 +86,7 @@ func runLogs(cmd *cobra.Command, args []string) error {
 
 	if len(services) == 1 {
 		// Single service - stream directly
-		containerName := fmt.Sprintf("%s_%s", cfg.Project.Name, services[0])
+		containerName := fmt.Sprintf("%s_%s", projectPrefix, services[0])
 		return streamLogs(ctx, docker, containerName, services[0], console, logsFollow, logsTail)
 	}
 
@@ -89,7 +96,7 @@ func runLogs(cmd *cobra.Command, args []string) error {
 		wg.Add(1)
 		go func(serviceName string) {
 			defer wg.Done()
-			containerName := fmt.Sprintf("%s_%s", cfg.Project.Name, serviceName)
+			containerName := fmt.Sprintf("%s_%s", projectPrefix, serviceName)
 			streamLogs(ctx, docker, containerName, serviceName, console, logsFollow, logsTail)
 		}(svc)
 	}

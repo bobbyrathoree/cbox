@@ -15,10 +15,11 @@ import (
 
 // Orchestrator coordinates multi-service operations.
 type Orchestrator struct {
-	config  *config.Config
-	builder *builder.Builder
-	runtime *runtime.Docker
-	console *output.Console
+	config    *config.Config
+	builder   *builder.Builder
+	runtime   *runtime.Docker
+	console   *output.Console
+	namespace string // Optional namespace for container isolation
 }
 
 // New creates a new Orchestrator.
@@ -29,6 +30,47 @@ func New(cfg *config.Config, console *output.Console) *Orchestrator {
 		runtime: runtime.New(console),
 		console: console,
 	}
+}
+
+// NewWithNamespace creates a new Orchestrator with namespace support.
+func NewWithNamespace(cfg *config.Config, console *output.Console, namespace string) *Orchestrator {
+	return &Orchestrator{
+		config:    cfg,
+		builder:   builder.New(console),
+		runtime:   runtime.New(console),
+		console:   console,
+		namespace: namespace,
+	}
+}
+
+// GetNamespace returns the orchestrator's namespace.
+func (o *Orchestrator) GetNamespace() string {
+	return o.namespace
+}
+
+// projectPrefix returns the project name with optional namespace prefix.
+// If namespace is set: "{namespace}-{project}"
+// If no namespace: "{project}"
+func (o *Orchestrator) projectPrefix() string {
+	if o.namespace != "" {
+		return fmt.Sprintf("%s-%s", o.namespace, o.config.Project.Name)
+	}
+	return o.config.Project.Name
+}
+
+// containerName returns the full container name for a service.
+func (o *Orchestrator) containerName(serviceName string) string {
+	return fmt.Sprintf("%s_%s", o.projectPrefix(), serviceName)
+}
+
+// networkName returns the network name for this project.
+func (o *Orchestrator) networkName() string {
+	return fmt.Sprintf("cbox_%s", o.projectPrefix())
+}
+
+// volumeName returns the full volume name for a named volume.
+func (o *Orchestrator) volumeName(volName string) string {
+	return fmt.Sprintf("%s_%s", o.projectPrefix(), volName)
 }
 
 // UpOptions contains options for bringing up services.
@@ -50,10 +92,10 @@ type DownOptions struct {
 
 // Up starts services in dependency order.
 func (o *Orchestrator) Up(ctx context.Context, opts UpOptions) error {
-	networkName := fmt.Sprintf("cbox_%s", o.config.Project.Name)
+	netName := o.networkName()
 
 	// Create network
-	if err := o.runtime.CreateNetwork(ctx, networkName); err != nil {
+	if err := o.runtime.CreateNetwork(ctx, netName); err != nil {
 		return fmt.Errorf("failed to create network: %w", err)
 	}
 
@@ -75,7 +117,7 @@ func (o *Orchestrator) Up(ctx context.Context, opts UpOptions) error {
 
 	// Create volumes
 	for volName := range o.config.Volumes {
-		prefixedName := fmt.Sprintf("%s_%s", o.config.Project.Name, volName)
+		prefixedName := o.volumeName(volName)
 		if err := o.runtime.CreateVolume(ctx, prefixedName); err != nil {
 			return fmt.Errorf("failed to create volume %s: %w", volName, err)
 		}
@@ -83,7 +125,7 @@ func (o *Orchestrator) Up(ctx context.Context, opts UpOptions) error {
 
 	// Start services in order
 	for _, level := range order {
-		if err := o.startServiceLevel(ctx, level, networkName, opts); err != nil {
+		if err := o.startServiceLevel(ctx, level, netName, opts); err != nil {
 			return err
 		}
 	}
@@ -102,7 +144,7 @@ func (o *Orchestrator) startServiceLevel(ctx context.Context, services []string,
 			defer wg.Done()
 
 			svc := o.config.Services[serviceName]
-			containerName := fmt.Sprintf("%s_%s", o.config.Project.Name, serviceName)
+			containerName := o.containerName(serviceName)
 
 			// Check if container already exists (idempotency)
 			containerExists := o.runtime.ContainerExists(ctx, containerName)
@@ -216,6 +258,7 @@ func (o *Orchestrator) startServiceLevel(ctx context.Context, services []string,
 				network,
 				imageName,
 				opts.DevMode,
+				o.namespace,
 			)
 
 			// Create and start container
@@ -275,12 +318,19 @@ func (o *Orchestrator) startServiceLevel(ctx context.Context, services []string,
 
 // Down stops all services.
 func (o *Orchestrator) Down(ctx context.Context, opts DownOptions) error {
-	networkName := fmt.Sprintf("cbox_%s", o.config.Project.Name)
+	netName := o.networkName()
 
-	// Get all running containers for this project
-	containers, err := o.runtime.ListContainers(ctx, map[string]string{
+	// Build label filter for containers
+	labels := map[string]string{
 		"cbox.project": o.config.Project.Name,
-	}, true)
+	}
+	// Add namespace filter if set
+	if o.namespace != "" {
+		labels["cbox.namespace"] = o.namespace
+	}
+
+	// Get all running containers for this project (and namespace if set)
+	containers, err := o.runtime.ListContainers(ctx, labels, true)
 	if err != nil {
 		o.console.Warn("Failed to list containers: %s", err)
 	}
@@ -289,7 +339,7 @@ func (o *Orchestrator) Down(ctx context.Context, opts DownOptions) error {
 	for _, c := range containers {
 		// Extract service name from container name
 		serviceName := c.Name
-		prefix := o.config.Project.Name + "_"
+		prefix := o.projectPrefix() + "_"
 		if len(serviceName) > len(prefix) && serviceName[:len(prefix)] == prefix {
 			serviceName = serviceName[len(prefix):]
 		}
@@ -326,7 +376,7 @@ func (o *Orchestrator) Down(ctx context.Context, opts DownOptions) error {
 	// Remove volumes if requested
 	if opts.Volumes {
 		for volName := range o.config.Volumes {
-			prefixedName := fmt.Sprintf("%s_%s", o.config.Project.Name, volName)
+			prefixedName := o.volumeName(volName)
 			if err := o.runtime.RemoveVolume(ctx, prefixedName); err != nil {
 				o.console.Warn("Failed to remove volume %s: %s", volName, err)
 			} else {
@@ -336,7 +386,7 @@ func (o *Orchestrator) Down(ctx context.Context, opts DownOptions) error {
 	}
 
 	// Remove network
-	if err := o.runtime.RemoveNetwork(ctx, networkName); err != nil {
+	if err := o.runtime.RemoveNetwork(ctx, netName); err != nil {
 		o.console.Warn("Failed to remove network: %s", err)
 	}
 
@@ -415,9 +465,16 @@ func (o *Orchestrator) resolveStartOrder(services []string, includeDeps bool) ([
 
 // Ps lists running services.
 func (o *Orchestrator) Ps(ctx context.Context, all bool) ([]ServiceStatus, error) {
-	containers, err := o.runtime.ListContainers(ctx, map[string]string{
+	// Build label filter for containers
+	labels := map[string]string{
 		"cbox.project": o.config.Project.Name,
-	}, all)
+	}
+	// Add namespace filter if set
+	if o.namespace != "" {
+		labels["cbox.namespace"] = o.namespace
+	}
+
+	containers, err := o.runtime.ListContainers(ctx, labels, all)
 	if err != nil {
 		return nil, err
 	}
@@ -426,7 +483,7 @@ func (o *Orchestrator) Ps(ctx context.Context, all bool) ([]ServiceStatus, error
 	for _, c := range containers {
 		// Extract service name from container name
 		serviceName := c.Name
-		prefix := o.config.Project.Name + "_"
+		prefix := o.projectPrefix() + "_"
 		if len(serviceName) > len(prefix) && serviceName[:len(prefix)] == prefix {
 			serviceName = serviceName[len(prefix):]
 		}

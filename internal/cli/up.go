@@ -77,8 +77,15 @@ func runUp(cmd *cobra.Command, args []string) error {
 
 	console.Header("Starting %s...", cfg.Project.Name)
 
-	// Create orchestrator
-	orch := orchestrator.New(cfg, console)
+	// Create orchestrator (with namespace if specified)
+	var orch *orchestrator.Orchestrator
+	ns := GetNamespace()
+	if ns != "" {
+		console.Info("Using namespace: %s", ns)
+		orch = orchestrator.NewWithNamespace(cfg, console, ns)
+	} else {
+		orch = orchestrator.New(cfg, console)
+	}
 
 	// Start services
 	err = orch.Up(ctx, orchestrator.UpOptions{
@@ -114,8 +121,8 @@ func runUp(cmd *cobra.Command, args []string) error {
 		// Create docker runtime for log streaming
 		docker := runtime.New(console)
 
-		// Stream logs from all services
-		go streamAllLogs(ctx, cfg, docker, console)
+		// Stream logs from all services (pass namespace for container name resolution)
+		go streamAllLogs(ctx, cfg, docker, console, orch.GetNamespace())
 
 		// Wait for shutdown signal
 		<-ctx.Done()
@@ -130,13 +137,18 @@ func runUp(cmd *cobra.Command, args []string) error {
 }
 
 // streamAllLogs streams logs from all services concurrently.
-func streamAllLogs(ctx context.Context, cfg *config.Config, docker *runtime.Docker, console *output.Console) {
+func streamAllLogs(ctx context.Context, cfg *config.Config, docker *runtime.Docker, console *output.Console, namespace string) {
 	var wg sync.WaitGroup
 	for name := range cfg.Services {
 		wg.Add(1)
 		go func(svcName string) {
 			defer wg.Done()
-			containerName := fmt.Sprintf("%s_%s", cfg.Project.Name, svcName)
+			// Build container name with optional namespace prefix
+			projectPrefix := cfg.Project.Name
+			if namespace != "" {
+				projectPrefix = fmt.Sprintf("%s-%s", namespace, cfg.Project.Name)
+			}
+			containerName := fmt.Sprintf("%s_%s", projectPrefix, svcName)
 
 			// Get log reader with follow mode
 			reader, err := docker.ContainerLogs(ctx, containerName, true, 10)

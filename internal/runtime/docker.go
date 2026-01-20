@@ -52,6 +52,8 @@ type ContainerConfig struct {
 	Labels         map[string]string
 	BindMounts     []BindMount // For dev mode
 	Healthcheck    *HealthcheckConfig
+	Memory         string // Memory limit (Docker format: 512m, 1g)
+	CPUs           string // CPU limit (fractional: "0.5", "2")
 }
 
 // PortMapping represents a port mapping.
@@ -172,6 +174,14 @@ func (d *Docker) CreateContainer(ctx context.Context, cfg ContainerConfig) (stri
 		args = append(args, "--health-timeout", cfg.Healthcheck.Timeout.String())
 		args = append(args, "--health-retries", strconv.Itoa(cfg.Healthcheck.Retries))
 		args = append(args, "--health-start-period", cfg.Healthcheck.StartPeriod.String())
+	}
+
+	// Resource limits
+	if cfg.Memory != "" {
+		args = append(args, "--memory", cfg.Memory)
+	}
+	if cfg.CPUs != "" {
+		args = append(args, "--cpus", cfg.CPUs)
 	}
 
 	// Image
@@ -548,8 +558,14 @@ func ContainerConfigFromService(
 	network string,
 	imageName string,
 	devMode bool,
+	namespace string,
 ) ContainerConfig {
-	containerName := fmt.Sprintf("%s_%s", projectName, name)
+	// Build project prefix (with optional namespace)
+	projectPrefix := projectName
+	if namespace != "" {
+		projectPrefix = fmt.Sprintf("%s-%s", namespace, projectName)
+	}
+	containerName := fmt.Sprintf("%s_%s", projectPrefix, name)
 
 	cfg := ContainerConfig{
 		Name:           containerName,
@@ -562,6 +578,11 @@ func ContainerConfigFromService(
 			"cbox.project": projectName,
 			"cbox.service": name,
 		},
+	}
+
+	// Add namespace label if set
+	if namespace != "" {
+		cfg.Labels["cbox.namespace"] = namespace
 	}
 
 	// Ports
@@ -597,6 +618,12 @@ func ContainerConfigFromService(
 				ContainerPath: "/app",
 			})
 		}
+	}
+
+	// Resource limits
+	if svc.Resources != nil {
+		cfg.Memory = svc.Resources.Memory
+		cfg.CPUs = svc.Resources.CPUs
 	}
 
 	// Healthcheck

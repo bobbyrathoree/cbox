@@ -59,8 +59,17 @@ type Service struct {
 	// Storage
 	Volumes []string `yaml:"volumes,omitempty"` // volume_name:/path or ./host:/container
 
+	// Resource limits (for local dev)
+	Resources *ResourceConfig `yaml:"resources,omitempty"`
+
 	// Deployment
 	Deploy *ServiceDeployConfig `yaml:"deploy,omitempty"` // Per-service deploy settings
+}
+
+// ResourceConfig defines resource limits for local development.
+type ResourceConfig struct {
+	Memory string `yaml:"memory,omitempty"` // Docker-style memory limit (e.g., "512m", "1g")
+	CPUs   string `yaml:"cpus,omitempty"`   // Fractional CPUs (e.g., "0.5", "2")
 }
 
 // HooksConfig defines lifecycle hooks for a service.

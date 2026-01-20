@@ -20,9 +20,11 @@ var (
 
 // Global flags
 var (
-	configFile string
-	verbose    bool
-	quiet      bool
+	configFile   string
+	verbose      bool
+	quiet        bool
+	outputFormat string
+	namespace    string
 )
 
 var rootCmd = &cobra.Command{
@@ -134,6 +136,8 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&configFile, "config", "c", "cbox.yaml", "config file")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 	rootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "quiet output (errors only)")
+	rootCmd.PersistentFlags().StringVarP(&outputFormat, "output", "o", "text", "output format: text, json")
+	rootCmd.PersistentFlags().StringVar(&namespace, "namespace", "", "namespace for container isolation (e.g., pr-123)")
 
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(initCmd)
@@ -182,4 +186,19 @@ func IsVerbose() bool {
 // IsQuiet returns whether quiet mode is enabled
 func IsQuiet() bool {
 	return quiet
+}
+
+// GetOutputFormat returns the output format (text or json)
+func GetOutputFormat() string {
+	return outputFormat
+}
+
+// IsJSONOutput returns true if JSON output is requested
+func IsJSONOutput() bool {
+	return outputFormat == "json"
+}
+
+// GetNamespace returns the namespace for container isolation
+func GetNamespace() string {
+	return namespace
 }

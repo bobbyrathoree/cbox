@@ -94,7 +94,7 @@ func TestDumpCommand(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.dbType.String(), func(t *testing.T) {
-			cmd := DumpCommand(tt.dbType)
+			cmd := DumpCommand(tt.dbType, "")
 			if tt.shouldBeNil {
 				if cmd != nil {
 					t.Errorf("DumpCommand(%v) = %v, want nil", tt.dbType, cmd)
@@ -123,7 +123,7 @@ func TestRestoreCommand(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.dbType.String(), func(t *testing.T) {
-			cmd := RestoreCommand(tt.dbType)
+			cmd := RestoreCommand(tt.dbType, "")
 			if tt.shouldBeNil {
 				if cmd != nil {
 					t.Errorf("RestoreCommand(%v) = %v, want nil", tt.dbType, cmd)

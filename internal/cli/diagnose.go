@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/bobbyrathore/cbox/internal/diagnose"
@@ -12,7 +11,7 @@ import (
 )
 
 var (
-	diagnoseJSON bool
+	diagnoseJSON bool // deprecated, use --output json
 )
 
 var diagnoseCmd = &cobra.Command{
@@ -29,22 +28,35 @@ Checks performed:
   - Connection errors in logs
 
 Examples:
-  cbox diagnose          # Run diagnostics
-  cbox diagnose --json   # Output as JSON`,
+  cbox diagnose              # Run diagnostics
+  cbox diagnose -o json      # Output as JSON
+  cbox diagnose --output json`,
 	RunE: runDiagnose,
 }
 
 func init() {
-	diagnoseCmd.Flags().BoolVar(&diagnoseJSON, "json", false, "output as JSON")
+	// Keep --json for backward compatibility but prefer --output json
+	diagnoseCmd.Flags().BoolVar(&diagnoseJSON, "json", false, "output as JSON (deprecated: use --output json)")
+	diagnoseCmd.Flags().MarkHidden("json")
 }
 
 func runDiagnose(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
-	console := output.NewWithOptions(verbose, quiet)
+	// Check for deprecated --json flag or global --output json
+	useJSON := diagnoseJSON || outputFormat == "json"
+	console := output.NewWithOutputMode(verbose, quiet, outputFormat)
+	if diagnoseJSON {
+		// Force JSON mode if deprecated flag used
+		console = output.NewWithOutputMode(verbose, quiet, "json")
+	}
 
 	// Load configuration
 	cfg, err := loadConfig()
 	if err != nil {
+		if console.IsJSONMode() {
+			console.EmitJSONError("diagnose", err)
+			return nil
+		}
 		console.ErrorWithHint(
 			fmt.Sprintf("Failed to load config: %s", err),
 			"Run 'cbox init' to create a cbox.yaml file",
@@ -54,22 +66,24 @@ func runDiagnose(cmd *cobra.Command, args []string) error {
 
 	docker := runtime.New(console)
 
-	console.Header("Diagnosing %s...", cfg.Project.Name)
+	if !console.IsJSONMode() {
+		console.Header("Diagnosing %s...", cfg.Project.Name)
+	}
 
 	// Run diagnostics
 	result, err := diagnose.Diagnose(ctx, cfg, docker)
 	if err != nil {
+		if console.IsJSONMode() {
+			console.EmitJSONError("diagnose", err)
+			return nil
+		}
 		console.Error("Diagnosis failed: %s", err)
 		return err
 	}
 
-	// Output JSON if requested
-	if diagnoseJSON {
-		data, err := json.MarshalIndent(result, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(data))
+	// Output JSON if requested (either via deprecated flag or global --output)
+	if useJSON || console.IsJSONMode() {
+		console.EmitJSON("diagnose", result, nil)
 		return nil
 	}
 

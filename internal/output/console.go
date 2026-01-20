@@ -2,6 +2,7 @@
 package output
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -11,31 +12,96 @@ import (
 	"github.com/fatih/color"
 )
 
+// OutputMode specifies the output format
+type OutputMode string
+
+const (
+	OutputModeText OutputMode = "text"
+	OutputModeJSON OutputMode = "json"
+)
+
+// JSONResult is the standard envelope for JSON output
+type JSONResult struct {
+	Success bool        `json:"success"`
+	Command string      `json:"command"`
+	Data    interface{} `json:"data,omitempty"`
+	Errors  []JSONError `json:"errors,omitempty"`
+}
+
+// JSONError represents an error in JSON output
+type JSONError struct {
+	Code    string `json:"code,omitempty"`
+	Message string `json:"message"`
+}
+
 // Console handles formatted terminal output.
 type Console struct {
-	out     io.Writer
-	err     io.Writer
-	verbose bool
-	quiet   bool
-	mu      sync.Mutex
+	out        io.Writer
+	err        io.Writer
+	verbose    bool
+	quiet      bool
+	outputMode OutputMode
+	mu         sync.Mutex
 }
 
 // New creates a new Console with default settings.
 func New() *Console {
 	return &Console{
-		out: os.Stdout,
-		err: os.Stderr,
+		out:        os.Stdout,
+		err:        os.Stderr,
+		outputMode: OutputModeText,
 	}
 }
 
 // NewWithOptions creates a Console with custom settings.
 func NewWithOptions(verbose, quiet bool) *Console {
 	return &Console{
-		out:     os.Stdout,
-		err:     os.Stderr,
-		verbose: verbose,
-		quiet:   quiet,
+		out:        os.Stdout,
+		err:        os.Stderr,
+		verbose:    verbose,
+		quiet:      quiet,
+		outputMode: OutputModeText,
 	}
+}
+
+// NewWithOutputMode creates a Console with output mode support.
+func NewWithOutputMode(verbose, quiet bool, mode string) *Console {
+	outputMode := OutputModeText
+	if mode == "json" {
+		outputMode = OutputModeJSON
+	}
+	return &Console{
+		out:        os.Stdout,
+		err:        os.Stderr,
+		verbose:    verbose,
+		quiet:      quiet || outputMode == OutputModeJSON, // JSON mode suppresses normal output
+		outputMode: outputMode,
+	}
+}
+
+// IsJSONMode returns true if JSON output is enabled
+func (c *Console) IsJSONMode() bool {
+	return c.outputMode == OutputModeJSON
+}
+
+// EmitJSON outputs a JSON result to stdout
+func (c *Console) EmitJSON(command string, data interface{}, errs []JSONError) {
+	result := JSONResult{
+		Success: len(errs) == 0,
+		Command: command,
+		Data:    data,
+		Errors:  errs,
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	encoder := json.NewEncoder(c.out)
+	encoder.SetIndent("", "  ")
+	encoder.Encode(result)
+}
+
+// EmitJSONError outputs a JSON error result
+func (c *Console) EmitJSONError(command string, err error) {
+	c.EmitJSON(command, nil, []JSONError{{Message: err.Error()}})
 }
 
 // Color definitions
