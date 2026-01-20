@@ -49,7 +49,7 @@ func runPs(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		if console.IsJSONMode() {
 			console.EmitJSONError("ps", err)
-			return nil // Don't return error in JSON mode, it's in the output
+			return err // Return error for proper exit code
 		}
 		console.ErrorWithHint(
 			fmt.Sprintf("Failed to load config: %s", err),
@@ -72,7 +72,7 @@ func runPs(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		if console.IsJSONMode() {
 			console.EmitJSONError("ps", err)
-			return nil
+			return err // Return error for proper exit code
 		}
 		return err
 	}

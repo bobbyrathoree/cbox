@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/bobbyrathore/cbox/internal/orchestrator"
@@ -10,6 +11,10 @@ import (
 	"github.com/bobbyrathore/cbox/internal/runtime"
 	"github.com/spf13/cobra"
 )
+
+// namespacePattern matches valid Docker-compatible namespace names
+// Must start with alphanumeric, contain only [a-zA-Z0-9._-], max 63 chars
+var namespacePattern = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$`)
 
 // Build-time variables (set via ldflags)
 var (
@@ -42,7 +47,17 @@ Get started:
   cbox down       Stop all services`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
-	RunE:          runDefault,
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		// Validate global flags
+		if err := validateOutputFormat(outputFormat); err != nil {
+			return err
+		}
+		if err := validateNamespace(namespace); err != nil {
+			return err
+		}
+		return nil
+	},
+	RunE: runDefault,
 }
 
 // runDefault implements smart default behavior when cbox is run with no args
@@ -201,4 +216,33 @@ func IsJSONOutput() bool {
 // GetNamespace returns the namespace for container isolation
 func GetNamespace() string {
 	return namespace
+}
+
+// validateOutputFormat checks that the output format is valid
+func validateOutputFormat(format string) error {
+	if format != "text" && format != "json" {
+		return fmt.Errorf("invalid output format %q: must be 'text' or 'json'", format)
+	}
+	return nil
+}
+
+// validateNamespace checks that the namespace is valid for Docker container names
+func validateNamespace(ns string) error {
+	if ns == "" {
+		return nil // Empty namespace is valid (means no namespace)
+	}
+	if len(ns) > 63 {
+		return fmt.Errorf("namespace too long: %d characters (max 63)", len(ns))
+	}
+	// Single character namespace is valid
+	if len(ns) == 1 {
+		if !regexp.MustCompile(`^[a-zA-Z0-9]$`).MatchString(ns) {
+			return fmt.Errorf("invalid namespace %q: must be alphanumeric", ns)
+		}
+		return nil
+	}
+	if !namespacePattern.MatchString(ns) {
+		return fmt.Errorf("invalid namespace %q: must start and end with alphanumeric, contain only [a-zA-Z0-9._-]", ns)
+	}
+	return nil
 }

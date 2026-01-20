@@ -55,7 +55,7 @@ func runDiagnose(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		if console.IsJSONMode() {
 			console.EmitJSONError("diagnose", err)
-			return nil
+			return err // Return error for proper exit code
 		}
 		console.ErrorWithHint(
 			fmt.Sprintf("Failed to load config: %s", err),
@@ -75,7 +75,7 @@ func runDiagnose(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		if console.IsJSONMode() {
 			console.EmitJSONError("diagnose", err)
-			return nil
+			return err // Return error for proper exit code
 		}
 		console.Error("Diagnosis failed: %s", err)
 		return err

@@ -50,10 +50,18 @@ func runRestart(cmd *cobra.Command, args []string) error {
 
 	docker := runtime.New(console)
 
-	// Get containers for this project
-	containers, err := docker.ListContainers(ctx, map[string]string{
+	// Build label filter (with namespace if specified)
+	labels := map[string]string{
 		"cbox.project": cfg.Project.Name,
-	}, false) // Only running containers
+	}
+	ns := GetNamespace()
+	if ns != "" {
+		labels["cbox.namespace"] = ns
+		console.Info("Using namespace: %s", ns)
+	}
+
+	// Get containers for this project
+	containers, err := docker.ListContainers(ctx, labels, false) // Only running containers
 	if err != nil {
 		console.Error("Failed to list containers: %s", err)
 		return err
@@ -68,9 +76,14 @@ func runRestart(cmd *cobra.Command, args []string) error {
 	// Build map of service name -> container
 	containerMap := make(map[string]runtime.Container)
 	for _, c := range containers {
-		// Extract service name from container name (project_service format)
+		// Extract service name from container name
+		// Format: {namespace}-{project}_{service} or {project}_{service}
 		serviceName := c.Name
-		prefix := cfg.Project.Name + "_"
+		projectPrefix := cfg.Project.Name
+		if ns != "" {
+			projectPrefix = ns + "-" + cfg.Project.Name
+		}
+		prefix := projectPrefix + "_"
 		if len(serviceName) > len(prefix) && serviceName[:len(prefix)] == prefix {
 			serviceName = serviceName[len(prefix):]
 		}
