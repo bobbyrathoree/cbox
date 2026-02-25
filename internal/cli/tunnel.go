@@ -15,8 +15,9 @@ import (
 )
 
 var (
-	tunnelHost  string
-	tunnelPorts []string
+	tunnelHost     string
+	tunnelPorts    []string
+	tunnelInsecure bool
 )
 
 var tunnelCmd = &cobra.Command{
@@ -45,6 +46,8 @@ Examples:
 func init() {
 	tunnelCmd.Flags().StringVar(&tunnelHost, "host", "", "remote SSH host (user@host:port)")
 	tunnelCmd.Flags().StringArrayVarP(&tunnelPorts, "port", "p", nil, "port mapping (local:remote)")
+
+	tunnelCmd.Flags().BoolVar(&tunnelInsecure, "insecure", false, "skip host key verification (dangerous!)")
 
 	tunnelCmd.MarkFlagRequired("host")
 }
@@ -103,6 +106,7 @@ func runTunnel(cmd *cobra.Command, args []string) error {
 		User:     user,
 		Port:     port,
 		Mappings: mappings,
+		Insecure: tunnelInsecure,
 	}, console)
 	if err != nil {
 		return err

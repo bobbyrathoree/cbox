@@ -3,6 +3,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -408,6 +409,61 @@ func (d *Docker) ListContainers(ctx context.Context, labels map[string]string, a
 	}
 
 	return containers, nil
+}
+
+// ContainerStats holds a point-in-time snapshot of container resource usage.
+type ContainerStats struct {
+	Name    string
+	CPU     string
+	Memory  string
+	NetIO   string
+	BlockIO string
+	PIDs    string
+}
+
+// GetContainerStats returns a point-in-time snapshot of resource usage
+// for containers matching the given labels.
+func (d *Docker) GetContainerStats(ctx context.Context, labels map[string]string) (map[string]ContainerStats, error) {
+	args := []string{"stats", "--no-stream", "--format",
+		`{"Name":"{{.Name}}","CPUPerc":"{{.CPUPerc}}","MemUsage":"{{.MemUsage}}","NetIO":"{{.NetIO}}","BlockIO":"{{.BlockIO}}","PIDs":"{{.PIDs}}"}`}
+	for k, v := range labels {
+		args = append(args, "--filter", fmt.Sprintf("label=%s=%s", k, v))
+	}
+
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("docker stats failed: %w", err)
+	}
+
+	result := make(map[string]ContainerStats)
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		var raw struct {
+			Name    string `json:"Name"`
+			CPU     string `json:"CPUPerc"`
+			Memory  string `json:"MemUsage"`
+			NetIO   string `json:"NetIO"`
+			BlockIO string `json:"BlockIO"`
+			PIDs    string `json:"PIDs"`
+		}
+		if err := json.Unmarshal([]byte(line), &raw); err != nil {
+			continue
+		}
+		result[raw.Name] = ContainerStats{
+			Name:    raw.Name,
+			CPU:     raw.CPU,
+			Memory:  raw.Memory,
+			NetIO:   raw.NetIO,
+			BlockIO: raw.BlockIO,
+			PIDs:    raw.PIDs,
+		}
+	}
+
+	return result, nil
 }
 
 // WaitHealthy waits for a container to become healthy.

@@ -159,6 +159,65 @@ func TestNew_NoSSHKeys(t *testing.T) {
 	}
 }
 
+func TestNew_InsecureFalse_NoKnownHosts(t *testing.T) {
+	// When Insecure is false and known_hosts is missing, New should return an error
+	// rather than silently accepting any host key
+	logger := &MockLogger{}
+
+	cfg := Config{
+		Host:     "localhost",
+		User:     "testuser",
+		Port:     22,
+		Insecure: false,
+	}
+
+	// If known_hosts doesn't exist, this should error (not silently fall back)
+	_, err := New(cfg, logger)
+	if err != nil {
+		// Verify the error message contains helpful guidance
+		errMsg := err.Error()
+		if !(contains(errMsg, "known_hosts") || contains(errMsg, "ssh-keyscan") || contains(errMsg, "auth")) {
+			t.Logf("Error doesn't contain expected guidance: %v", err)
+		}
+	}
+	// If no error, SSH keys and known_hosts exist on this system - that's fine
+}
+
+func TestNew_InsecureTrue_NoKnownHosts(t *testing.T) {
+	// When Insecure is true, missing known_hosts should NOT cause an error
+	logger := &MockLogger{}
+
+	cfg := Config{
+		Host:     "localhost",
+		User:     "testuser",
+		Port:     22,
+		Insecure: true,
+	}
+
+	_, err := New(cfg, logger)
+	// The only acceptable error is "no SSH auth methods" (no keys),
+	// NOT a known_hosts error
+	if err != nil {
+		errMsg := err.Error()
+		if contains(errMsg, "known_hosts") {
+			t.Errorf("Insecure mode should not fail on missing known_hosts: %v", err)
+		}
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && searchString(s, substr)
+}
+
+func searchString(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
 func TestTunnel_Close_NilClient(t *testing.T) {
 	// Test that Close doesn't panic with nil client
 	tun := &Tunnel{

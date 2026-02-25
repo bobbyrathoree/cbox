@@ -58,9 +58,7 @@ func runWait(cmd *cobra.Command, args []string) error {
 	docker := runtime.New(console)
 
 	// Get containers for this project
-	containers, err := docker.ListContainers(ctx, map[string]string{
-		"cbox.project": cfg.Project.Name,
-	}, false) // Only running containers
+	containers, err := docker.ListContainers(ctx, NamespaceLabels(cfg.Project.Name), false) // Only running containers
 	if err != nil {
 		console.Error("Failed to list containers: %s", err)
 		return err
@@ -76,7 +74,7 @@ func runWait(cmd *cobra.Command, args []string) error {
 	serviceContainers := make(map[string]string)
 	for _, c := range containers {
 		serviceName := c.Name
-		prefix := cfg.Project.Name + "_"
+		prefix := ProjectPrefix(cfg.Project.Name) + "_"
 		if len(serviceName) > len(prefix) && serviceName[:len(prefix)] == prefix {
 			serviceName = serviceName[len(prefix):]
 		}

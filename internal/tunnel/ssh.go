@@ -29,6 +29,7 @@ type Config struct {
 	User     string
 	Port     int
 	Mappings []PortMapping
+	Insecure bool // Skip host key verification (dangerous!)
 }
 
 // Tunnel manages SSH reverse tunnel connections
@@ -89,10 +90,16 @@ func New(cfg Config, logger Logger) (*Tunnel, error) {
 	// Get host key callback
 	hostKeyCallback, err := getHostKeyCallback()
 	if err != nil {
-		// Fall back to insecure (accept any key) if no known_hosts
-		hostKeyCallback = ssh.InsecureIgnoreHostKey()
-		if logger != nil {
-			logger.Warn("No known_hosts file found, accepting any host key")
+		if cfg.Insecure {
+			hostKeyCallback = ssh.InsecureIgnoreHostKey()
+			if logger != nil {
+				logger.Warn("Using insecure mode: accepting any host key")
+			}
+		} else {
+			return nil, fmt.Errorf("no known_hosts file found at ~/.ssh/known_hosts: %w\n"+
+				"  Fix: run 'ssh-keyscan %s >> ~/.ssh/known_hosts'\n"+
+				"  Or:  use --insecure to skip host key verification (not recommended)",
+				err, cfg.Host)
 		}
 	}
 

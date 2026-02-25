@@ -67,14 +67,17 @@ func runTop(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Get container names for this project
-	containerFilter := fmt.Sprintf("label=cbox.project=%s", cfg.Project.Name)
+	// Get container names for this project (with optional namespace filter)
+	statsArgs := []string{"stats",
+		"--format", `{"Name":"{{.Name}}","CPUPerc":"{{.CPUPerc}}","MemUsage":"{{.MemUsage}}","NetIO":"{{.NetIO}}","BlockIO":"{{.BlockIO}}","PIDs":"{{.PIDs}}"}`,
+		"--filter", fmt.Sprintf("label=cbox.project=%s", cfg.Project.Name),
+	}
+	if ns := GetNamespace(); ns != "" {
+		statsArgs = append(statsArgs, "--filter", fmt.Sprintf("label=cbox.namespace=%s", ns))
+	}
 
 	// Start docker stats streaming
-	statsCmd := exec.CommandContext(ctx, "docker", "stats",
-		"--format", `{"Name":"{{.Name}}","CPUPerc":"{{.CPUPerc}}","MemUsage":"{{.MemUsage}}","NetIO":"{{.NetIO}}","BlockIO":"{{.BlockIO}}","PIDs":"{{.PIDs}}"}`,
-		"--filter", containerFilter,
-	)
+	statsCmd := exec.CommandContext(ctx, "docker", statsArgs...)
 
 	stdout, err := statsCmd.StdoutPipe()
 	if err != nil {
@@ -129,7 +132,7 @@ func runTop(cmd *cobra.Command, args []string) error {
 }
 
 func extractServiceName(containerName, projectName string) string {
-	prefix := projectName + "_"
+	prefix := ProjectPrefix(projectName) + "_"
 	if strings.HasPrefix(containerName, prefix) {
 		return containerName[len(prefix):]
 	}

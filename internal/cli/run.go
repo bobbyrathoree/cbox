@@ -90,7 +90,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 	}
 
 	// Build docker run command
-	networkName := fmt.Sprintf("cbox_%s", cfg.Project.Name)
+	networkName := fmt.Sprintf("cbox_%s", ProjectPrefix(cfg.Project.Name))
 	dockerArgs := []string{"run", "--rm"}
 
 	// Allocate TTY by default unless disabled or not a terminal
@@ -122,6 +122,9 @@ func runRun(cmd *cobra.Command, args []string) error {
 	dockerArgs = append(dockerArgs, "--label", fmt.Sprintf("cbox.project=%s", cfg.Project.Name))
 	dockerArgs = append(dockerArgs, "--label", fmt.Sprintf("cbox.service=%s", serviceName))
 	dockerArgs = append(dockerArgs, "--label", "cbox.run=true")
+	if ns := GetNamespace(); ns != "" {
+		dockerArgs = append(dockerArgs, "--label", fmt.Sprintf("cbox.namespace=%s", ns))
+	}
 
 	// Image
 	dockerArgs = append(dockerArgs, imageName)

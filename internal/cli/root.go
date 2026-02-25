@@ -218,6 +218,25 @@ func GetNamespace() string {
 	return namespace
 }
 
+// ProjectPrefix returns the project name with optional namespace prefix.
+// If namespace is set: "{namespace}-{project}", otherwise just "{project}".
+func ProjectPrefix(projectName string) string {
+	ns := GetNamespace()
+	if ns != "" {
+		return fmt.Sprintf("%s-%s", ns, projectName)
+	}
+	return projectName
+}
+
+// NamespaceLabels returns label filter map including namespace when set.
+func NamespaceLabels(projectName string) map[string]string {
+	labels := map[string]string{"cbox.project": projectName}
+	if ns := GetNamespace(); ns != "" {
+		labels["cbox.namespace"] = ns
+	}
+	return labels
+}
+
 // validateOutputFormat checks that the output format is valid
 func validateOutputFormat(format string) error {
 	if format != "text" && format != "json" {

@@ -51,14 +51,18 @@ func runClean(cmd *cobra.Command, args []string) error {
 	var totalFreed int64
 
 	// Remove stopped containers for this project
-	containerFilter := fmt.Sprintf("label=cbox.project=%s", cfg.Project.Name)
-
-	// Get stopped containers
-	listCmd := exec.CommandContext(ctx, "docker", "ps", "-a", "-q",
-		"--filter", containerFilter,
+	ns := GetNamespace()
+	containerFilterArgs := []string{"ps", "-a", "-q",
+		"--filter", fmt.Sprintf("label=cbox.project=%s", cfg.Project.Name),
 		"--filter", "status=exited",
 		"--filter", "status=created",
-	)
+	}
+	if ns != "" {
+		containerFilterArgs = append(containerFilterArgs, "--filter", fmt.Sprintf("label=cbox.namespace=%s", ns))
+	}
+
+	// Get stopped containers
+	listCmd := exec.CommandContext(ctx, "docker", containerFilterArgs...)
 	containerOutput, _ := listCmd.Output()
 	containerIDs := strings.Fields(string(containerOutput))
 
@@ -82,12 +86,17 @@ func runClean(cmd *cobra.Command, args []string) error {
 	}
 
 	// Remove unused networks for this project
-	networkFilter := fmt.Sprintf("label=cbox.project=%s", cfg.Project.Name)
-	networkCmd := exec.CommandContext(ctx, "docker", "network", "prune", "-f", "--filter", networkFilter)
+	networkPruneArgs := []string{"network", "prune", "-f",
+		"--filter", fmt.Sprintf("label=cbox.project=%s", cfg.Project.Name),
+	}
+	if ns != "" {
+		networkPruneArgs = append(networkPruneArgs, "--filter", fmt.Sprintf("label=cbox.namespace=%s", ns))
+	}
+	networkCmd := exec.CommandContext(ctx, "docker", networkPruneArgs...)
 	networkCmd.Run()
 
 	// Also try to remove the project network specifically
-	networkName := fmt.Sprintf("cbox_%s", cfg.Project.Name)
+	networkName := fmt.Sprintf("cbox_%s", ProjectPrefix(cfg.Project.Name))
 	exec.CommandContext(ctx, "docker", "network", "rm", networkName).Run()
 
 	if cleanAll {
@@ -122,7 +131,7 @@ func runClean(cmd *cobra.Command, args []string) error {
 		}
 
 		// Remove project volumes
-		volumePrefix := fmt.Sprintf("%s_", cfg.Project.Name)
+		volumePrefix := fmt.Sprintf("%s_", ProjectPrefix(cfg.Project.Name))
 		listVolumesCmd := exec.CommandContext(ctx, "docker", "volume", "ls", "-q", "--filter", fmt.Sprintf("name=%s", volumePrefix))
 		volumesOutput, _ := listVolumesCmd.Output()
 

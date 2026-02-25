@@ -129,7 +129,7 @@ func runDBShell(cmd *cobra.Command, args []string) error {
 		// Use specified service
 		serviceName = args[0]
 		if svc, ok := cfg.Services[serviceName]; ok {
-			containerName = fmt.Sprintf("%s_%s", cfg.Project.Name, serviceName)
+			containerName = fmt.Sprintf("%s_%s", ProjectPrefix(cfg.Project.Name), serviceName)
 			dbType = db.DetectDBType(svc.Image)
 		} else {
 			return fmt.Errorf("service '%s' not found in config", serviceName)
@@ -140,7 +140,7 @@ func runDBShell(cmd *cobra.Command, args []string) error {
 			detected := db.DetectDBType(svc.Image)
 			if detected != db.Unknown {
 				serviceName = name
-				containerName = fmt.Sprintf("%s_%s", cfg.Project.Name, name)
+				containerName = fmt.Sprintf("%s_%s", ProjectPrefix(cfg.Project.Name), name)
 				dbType = detected
 				break
 			}
@@ -151,10 +151,9 @@ func runDBShell(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check if container is running
-	containers, err := docker.ListContainers(ctx, map[string]string{
-		"cbox.service": serviceName,
-		"cbox.project": cfg.Project.Name,
-	}, false)
+	shellLabels := NamespaceLabels(cfg.Project.Name)
+	shellLabels["cbox.service"] = serviceName
+	containers, err := docker.ListContainers(ctx, shellLabels, false)
 	if err != nil || len(containers) == 0 {
 		console.ErrorWithHint(
 			fmt.Sprintf("Service '%s' is not running", serviceName),
@@ -405,7 +404,7 @@ func findDBService(cfg *config.Config, serviceFlag string, docker *runtime.Docke
 			return
 		}
 		serviceName = serviceFlag
-		containerName = fmt.Sprintf("%s_%s", cfg.Project.Name, serviceFlag)
+		containerName = fmt.Sprintf("%s_%s", ProjectPrefix(cfg.Project.Name), serviceFlag)
 		dbType = db.DetectDBType(svc.Image)
 		if dbType == db.Unknown {
 			err = fmt.Errorf("service '%s' is not a recognized database", serviceFlag)
@@ -417,7 +416,7 @@ func findDBService(cfg *config.Config, serviceFlag string, docker *runtime.Docke
 			detected := db.DetectDBType(svc.Image)
 			if detected != db.Unknown && detected != db.Redis {
 				serviceName = name
-				containerName = fmt.Sprintf("%s_%s", cfg.Project.Name, name)
+				containerName = fmt.Sprintf("%s_%s", ProjectPrefix(cfg.Project.Name), name)
 				dbType = detected
 				break
 			}
@@ -429,10 +428,9 @@ func findDBService(cfg *config.Config, serviceFlag string, docker *runtime.Docke
 	}
 
 	// Check if container is running
-	containers, listErr := docker.ListContainers(ctx, map[string]string{
-		"cbox.service": serviceName,
-		"cbox.project": cfg.Project.Name,
-	}, false)
+	findLabels := NamespaceLabels(cfg.Project.Name)
+	findLabels["cbox.service"] = serviceName
+	containers, listErr := docker.ListContainers(ctx, findLabels, false)
 	if listErr != nil || len(containers) == 0 {
 		err = fmt.Errorf("service '%s' is not running - run 'cbox up %s' first", serviceName, serviceName)
 		return

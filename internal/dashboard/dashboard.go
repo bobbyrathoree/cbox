@@ -10,6 +10,7 @@ import (
 	"github.com/bobbyrathore/cbox/internal/config"
 	"github.com/bobbyrathore/cbox/internal/orchestrator"
 	"github.com/bobbyrathore/cbox/internal/output"
+	"github.com/bobbyrathore/cbox/internal/runtime"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -74,6 +75,7 @@ type Model struct {
 
 	// Dependencies
 	orch    *orchestrator.Orchestrator
+	docker  *runtime.Docker
 	cfg     *config.Config
 	console *output.Console
 }
@@ -81,9 +83,11 @@ type Model struct {
 // New creates a new dashboard model
 func New(cfg *config.Config, console *output.Console) Model {
 	orch := orchestrator.New(cfg, console)
+	docker := runtime.New(console)
 	return Model{
 		projectName: cfg.Project.Name,
 		orch:        orch,
+		docker:      docker,
 		cfg:         cfg,
 		console:     console,
 		services:    []ServiceInfo{},
@@ -94,7 +98,7 @@ func New(cfg *config.Config, console *output.Console) Model {
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		tea.SetWindowTitle(fmt.Sprintf("cbox - %s", m.projectName)),
-		pollServices(m.orch),
+		pollServices(m.orch, m.docker, m.projectName),
 	)
 }
 
@@ -104,8 +108,8 @@ type pollServicesMsg struct {
 	err      error
 }
 
-// pollServices polls service status
-func pollServices(orch *orchestrator.Orchestrator) tea.Cmd {
+// pollServices polls service status and live resource metrics
+func pollServices(orch *orchestrator.Orchestrator, docker *runtime.Docker, projectName string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -114,6 +118,13 @@ func pollServices(orch *orchestrator.Orchestrator) tea.Cmd {
 		if err != nil {
 			return pollServicesMsg{err: err}
 		}
+
+		// Fetch live container stats
+		labels := map[string]string{"cbox.project": projectName}
+		if ns := orch.GetNamespace(); ns != "" {
+			labels["cbox.namespace"] = ns
+		}
+		statsMap, _ := docker.GetContainerStats(ctx, labels)
 
 		var services []ServiceInfo
 		for _, s := range statuses {
@@ -125,6 +136,15 @@ func pollServices(orch *orchestrator.Orchestrator) tea.Cmd {
 				CPU:    "-",
 				Memory: "-",
 				NetIO:  "-",
+			}
+			// Merge live stats if available
+			for containerName, stats := range statsMap {
+				if strings.HasSuffix(containerName, "_"+s.Name) {
+					svc.CPU = stats.CPU
+					svc.Memory = stats.Memory
+					svc.NetIO = stats.NetIO
+					break
+				}
 			}
 			services = append(services, svc)
 		}
@@ -215,11 +235,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tickCmd()
 
 	case tickMsg:
-		return m, pollServices(m.orch)
+		return m, pollServices(m.orch, m.docker, m.projectName)
 
 	case actionCompleteMsg:
 		// Refresh after action
-		return m, pollServices(m.orch)
+		return m, pollServices(m.orch, m.docker, m.projectName)
 	}
 
 	return m, nil
@@ -287,11 +307,14 @@ func (m Model) View() string {
 		b.WriteString("\n")
 	} else {
 		// Header
-		header := fmt.Sprintf("  %-15s %-10s %-25s %-10s",
+		header := fmt.Sprintf("  %-15s %-10s %-25s %-10s %-8s %-20s %-14s",
 			headerStyle.Render("SERVICE"),
 			headerStyle.Render("STATUS"),
 			headerStyle.Render("PORTS"),
 			headerStyle.Render("HEALTH"),
+			headerStyle.Render("CPU"),
+			headerStyle.Render("MEMORY"),
+			headerStyle.Render("NET I/O"),
 		)
 		b.WriteString(header)
 		b.WriteString("\n")
@@ -312,11 +335,14 @@ func (m Model) View() string {
 				healthStyle = unhealthyStyle
 			}
 
-			row := fmt.Sprintf("  %-15s %-10s %-25s %-10s",
+			row := fmt.Sprintf("  %-15s %-10s %-25s %-10s %-8s %-20s %-14s",
 				svc.Name,
 				statusStyle.Render(svc.Status),
 				svc.Ports,
 				healthStyle.Render(svc.Health),
+				svc.CPU,
+				svc.Memory,
+				svc.NetIO,
 			)
 
 			if i == m.selected {

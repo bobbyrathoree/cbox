@@ -55,7 +55,7 @@ func runExec(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("unknown service: %s", service)
 	}
 
-	containerName := fmt.Sprintf("%s_%s", cfg.Project.Name, service)
+	containerName := fmt.Sprintf("%s_%s", ProjectPrefix(cfg.Project.Name), service)
 
 	// Build docker exec command
 	dockerArgs := []string{"exec"}
