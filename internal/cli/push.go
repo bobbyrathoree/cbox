@@ -41,7 +41,7 @@ Examples:
 }
 
 func init() {
-	pushCmd.Flags().StringVarP(&pushTag, "tag", "t", "latest", "image tag to push")
+	pushCmd.Flags().StringVar(&pushTag, "tag", "latest", "image tag to push")
 	pushCmd.Flags().BoolVar(&pushAll, "all", false, "push all services")
 	pushCmd.Flags().BoolVar(&pushBuild, "build", false, "build images before pushing")
 }

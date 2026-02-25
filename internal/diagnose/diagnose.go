@@ -177,6 +177,7 @@ func runChecks(ctx context.Context, cfg *config.Config, docker *runtime.Docker, 
 								Details:    details,
 								Suggestion: "Free up the original port or update your configuration",
 							})
+							break // Only report once per service (IPv4 and IPv6 both match)
 						}
 					}
 				}

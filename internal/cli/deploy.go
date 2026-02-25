@@ -37,7 +37,7 @@ Examples:
 }
 
 func init() {
-	deployCmd.Flags().StringVarP(&deployTag, "tag", "t", "latest", "image tag to deploy")
+	deployCmd.Flags().StringVar(&deployTag, "tag", "latest", "image tag to deploy")
 	deployCmd.Flags().StringVarP(&deployEnv, "env", "e", "", "environment to deploy (e.g., staging, production)")
 	deployCmd.Flags().StringVarP(&deployService, "service", "s", "", "deploy specific service only")
 	deployCmd.Flags().BoolVar(&deployDryRun, "dry-run", false, "show what would be deployed")

@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -132,11 +131,7 @@ func runTop(cmd *cobra.Command, args []string) error {
 }
 
 func extractServiceName(containerName, projectName string) string {
-	prefix := ProjectPrefix(projectName) + "_"
-	if strings.HasPrefix(containerName, prefix) {
-		return containerName[len(prefix):]
-	}
-	return containerName
+	return ExtractServiceName(containerName, projectName)
 }
 
 func clearScreen() {

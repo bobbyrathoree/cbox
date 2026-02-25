@@ -31,7 +31,7 @@ Examples:
 }
 
 func init() {
-	restartCmd.Flags().DurationVarP(&restartTimeout, "timeout", "t", 10*time.Second, "timeout for stopping each service")
+	restartCmd.Flags().DurationVar(&restartTimeout, "timeout", 10*time.Second, "timeout for stopping each service")
 }
 
 func runRestart(cmd *cobra.Command, args []string) error {
@@ -51,12 +51,8 @@ func runRestart(cmd *cobra.Command, args []string) error {
 	docker := runtime.New(console)
 
 	// Build label filter (with namespace if specified)
-	labels := map[string]string{
-		"cbox.project": cfg.Project.Name,
-	}
-	ns := GetNamespace()
-	if ns != "" {
-		labels["cbox.namespace"] = ns
+	labels := NamespaceLabels(cfg.Project.Name)
+	if ns := GetNamespace(); ns != "" {
 		console.Info("Using namespace: %s", ns)
 	}
 
@@ -76,17 +72,7 @@ func runRestart(cmd *cobra.Command, args []string) error {
 	// Build map of service name -> container
 	containerMap := make(map[string]runtime.Container)
 	for _, c := range containers {
-		// Extract service name from container name
-		// Format: {namespace}-{project}_{service} or {project}_{service}
-		serviceName := c.Name
-		projectPrefix := cfg.Project.Name
-		if ns != "" {
-			projectPrefix = ns + "-" + cfg.Project.Name
-		}
-		prefix := projectPrefix + "_"
-		if len(serviceName) > len(prefix) && serviceName[:len(prefix)] == prefix {
-			serviceName = serviceName[len(prefix):]
-		}
+		serviceName := ExtractServiceName(c.Name, cfg.Project.Name)
 		containerMap[serviceName] = c
 	}
 

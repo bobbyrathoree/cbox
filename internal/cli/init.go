@@ -146,17 +146,12 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	if !detected {
 		console.Warn("Could not detect project type")
-		console.Info("Creating minimal cbox.yaml - please edit manually")
+		console.Info("Creating minimal cbox.yaml - edit the runtime and command fields before building")
 
-		// Create a template config
+		// Create a generic scaffold that requires user editing
 		cfg.Services["app"] = config.Service{
-			Path:    ".",
-			Runtime: "nodejs", // Default
-			Port:    3000,
-			Command: []string{"npm", "start"},
-			Dev: config.DevConfig{
-				Command: []string{"npm", "run", "dev"},
-			},
+			Path: ".",
+			Port: 8080,
 		}
 	}
 

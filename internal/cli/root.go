@@ -237,6 +237,16 @@ func NamespaceLabels(projectName string) map[string]string {
 	return labels
 }
 
+// ExtractServiceName extracts the service name from a Docker container name
+// by stripping the project prefix (including namespace if set).
+func ExtractServiceName(containerName, projectName string) string {
+	prefix := ProjectPrefix(projectName) + "_"
+	if strings.HasPrefix(containerName, prefix) {
+		return containerName[len(prefix):]
+	}
+	return containerName
+}
+
 // validateOutputFormat checks that the output format is valid
 func validateOutputFormat(format string) error {
 	if format != "text" && format != "json" {

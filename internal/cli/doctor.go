@@ -2,10 +2,12 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 
-	"github.com/fatih/color"
+	"github.com/bobbyrathore/cbox/internal/config"
+	"github.com/bobbyrathore/cbox/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -23,50 +25,48 @@ Verifies:
 }
 
 func runDoctor(cmd *cobra.Command, args []string) error {
-	green := color.New(color.FgGreen).SprintFunc()
-	red := color.New(color.FgRed).SprintFunc()
-	// yellow := color.New(color.FgYellow).SprintFunc()
+	console := output.NewWithOptions(verbose, quiet)
 
-	fmt.Println("Checking system requirements...")
-	fmt.Println()
+	console.Info("Checking system requirements...")
+	console.Newline()
 
 	allPassed := true
 
 	// Check Docker
 	dockerVersion, err := checkDocker()
 	if err != nil {
-		fmt.Printf("  %s Docker: %s\n", red("✗"), err)
+		console.Error("Docker: %s", err)
 		allPassed = false
 	} else {
-		fmt.Printf("  %s Docker Engine %s\n", green("✓"), dockerVersion)
+		console.Success("Docker Engine %s", dockerVersion)
 	}
 
 	// Check BuildKit
 	buildkitAvailable, err := checkBuildKit()
 	if err != nil {
-		fmt.Printf("  %s BuildKit: %s\n", red("✗"), err)
+		console.Error("BuildKit: %s", err)
 		allPassed = false
 	} else if buildkitAvailable {
-		fmt.Printf("  %s BuildKit enabled\n", green("✓"))
+		console.Success("BuildKit enabled")
 	} else {
-		fmt.Printf("  %s BuildKit: not available\n", red("✗"))
+		console.Error("BuildKit: not available")
 		allPassed = false
 	}
 
 	// Check config file
 	configValid, err := checkConfig()
 	if err != nil {
-		fmt.Printf("  %s Config: %s\n", red("✗"), err)
+		console.Error("Config: %s", err)
 		// Not a hard failure - config might not exist yet
 	} else if configValid {
-		fmt.Printf("  %s cbox.yaml valid\n", green("✓"))
+		console.Success("cbox.yaml valid")
 	} else {
-		fmt.Printf("  %s cbox.yaml not found (run 'cbox init' to create)\n", green("-"))
+		console.Dim("cbox.yaml not found (run 'cbox init' to create)")
 	}
 
-	fmt.Println()
+	console.Newline()
 	if allPassed {
-		fmt.Println("All checks passed!")
+		console.Success("All checks passed!")
 		return nil
 	}
 	return fmt.Errorf("some checks failed")
@@ -91,11 +91,13 @@ func checkBuildKit() (bool, error) {
 }
 
 func checkConfig() (bool, error) {
-	// TODO: Actually validate the config file
-	// For now, just check if it exists
-	cmd := exec.Command("test", "-f", GetConfigFile())
-	if err := cmd.Run(); err != nil {
+	configPath := GetConfigFile()
+	if _, err := os.Stat(configPath); err != nil {
 		return false, nil // File doesn't exist, not an error
+	}
+	_, err := config.Load(configPath)
+	if err != nil {
+		return false, fmt.Errorf("invalid: %s", err)
 	}
 	return true, nil
 }

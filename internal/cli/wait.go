@@ -73,11 +73,7 @@ func runWait(cmd *cobra.Command, args []string) error {
 	// Build map of service name -> container name
 	serviceContainers := make(map[string]string)
 	for _, c := range containers {
-		serviceName := c.Name
-		prefix := ProjectPrefix(cfg.Project.Name) + "_"
-		if len(serviceName) > len(prefix) && serviceName[:len(prefix)] == prefix {
-			serviceName = serviceName[len(prefix):]
-		}
+		serviceName := ExtractServiceName(c.Name, cfg.Project.Name)
 		serviceContainers[serviceName] = c.Name
 	}
 

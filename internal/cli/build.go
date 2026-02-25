@@ -122,7 +122,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 
 	// Build services
 	if buildParallel && len(servicesToBuild) > 1 {
-		return buildParallel_(ctx, b, cfg, servicesToBuild, console)
+		return buildParallelServices(ctx, b, cfg, servicesToBuild, console)
 	}
 	return buildSequential(ctx, b, cfg, servicesToBuild, console)
 }
@@ -164,7 +164,7 @@ func buildSequential(ctx context.Context, b *builder.Builder, cfg *config.Config
 	return nil
 }
 
-func buildParallel_(ctx context.Context, b *builder.Builder, cfg *config.Config, services []string, console *output.Console) error {
+func buildParallelServices(ctx context.Context, b *builder.Builder, cfg *config.Config, services []string, console *output.Console) error {
 	var wg sync.WaitGroup
 	errors := make(chan error, len(services))
 
@@ -209,9 +209,13 @@ func buildParallel_(ctx context.Context, b *builder.Builder, cfg *config.Config,
 	wg.Wait()
 	close(errors)
 
-	// Check for errors
+	// Collect all errors
+	var buildErrors []error
 	for err := range errors {
-		return err // Return first error
+		buildErrors = append(buildErrors, err)
+	}
+	if len(buildErrors) > 0 {
+		return fmt.Errorf("%d service(s) failed to build", len(buildErrors))
 	}
 
 	return nil
