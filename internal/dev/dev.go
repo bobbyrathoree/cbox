@@ -23,7 +23,7 @@ type DevLoop struct {
 	config       *config.Config
 	orchestrator *orchestrator.Orchestrator
 	builder      *builder.Builder
-	runtime      *runtime.Docker
+	runtime      runtime.ContainerRuntime
 	console      *output.Console
 	watchers     []*Watcher
 	mu           sync.Mutex

@@ -92,7 +92,7 @@ services:
 | **Smart Detection** | Auto-detects Node.js, Python, Go runtimes and frameworks |
 | **Fast Builds** | BuildKit caching enabled by default |
 | **Dev Mode** | Hot reload with `cbox dev` |
-| **Port Conflict Resolution** | Automatically finds alternative ports |
+| **Port Conflict Resolution** | Finds alternative ports with `--auto-port` flag |
 | **Database Tools** | `cbox db shell`, snapshots, and more |
 | **Cloud Deploy** | Push to ECR and deploy to ECS/Fargate |
 | **Built-in Diagnostics** | `cbox diagnose` finds common problems |
@@ -255,7 +255,7 @@ curl http://localhost:8000
 | `cbox validate` | Validate configuration |
 | `cbox diagnose` | Find common problems |
 | `cbox doctor` | Check system requirements |
-| `cbox dashboard` | Open web dashboard |
+| `cbox dashboard` | Interactive TUI dashboard |
 
 ### Database Tools
 
@@ -537,6 +537,73 @@ cbox run api npm test
 
 ---
 
+## Advanced Features
+
+### Docker Compose Import
+
+Convert an existing `docker-compose.yaml` to `cbox.yaml`:
+
+```bash
+cbox compose import                  # Import docker-compose.yaml
+cbox compose import -f compose.yml   # Import specific file
+cbox compose import --force          # Overwrite existing cbox.yaml
+```
+
+### Environment Management
+
+```bash
+cbox env list              # List available environments
+cbox env switch staging    # Switch to staging environment
+cbox env current           # Show current environment
+cbox env show staging      # Show environment configuration
+```
+
+### Namespace Isolation
+
+Run isolated instances of the same project (useful for CI/CD parallel testing):
+
+```bash
+cbox --namespace pr-123 up -d     # Isolated containers for PR 123
+cbox --namespace pr-456 up -d     # Another isolated set
+cbox --namespace pr-123 down      # Clean up only PR 123
+```
+
+### JSON Output
+
+Use `-o json` for scripting and CI/CD integration:
+
+```bash
+cbox ps -o json                    # JSON service status
+cbox validate -o json              # JSON validation results
+cbox diagnose -o json              # JSON diagnostic report
+```
+
+### Resource Limits
+
+Set CPU and memory limits for local development:
+
+```yaml
+services:
+  api:
+    path: .
+    port: 3000
+    resources:
+      memory: "512m"
+      cpus: "0.5"
+```
+
+### Registry Support
+
+Push to DockerHub or AWS ECR:
+
+```yaml
+registry:
+  type: dockerhub       # or ecr
+  namespace: myorg       # DockerHub org/user
+```
+
+---
+
 ## Troubleshooting
 
 ### Common Issues
@@ -588,7 +655,7 @@ services:
 
 **Cause:** Another process is using the same port.
 
-**Fix:** cbox automatically finds an alternative port and shows a warning:
+**Fix:** Use the `--auto-port` flag to automatically find an alternative port:
 ```
 ⚠ Port 3000 in use. Using 3001 instead
 ```

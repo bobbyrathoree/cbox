@@ -8,9 +8,11 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/bobbyrathore/cbox/internal/config"
 	"github.com/bobbyrathore/cbox/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -42,11 +44,45 @@ type ContainerStats struct {
 	PIDs     string `json:"PIDs"`
 }
 
+// TopServiceJSON represents a single service's stats for JSON output
+type TopServiceJSON struct {
+	Name    string `json:"name"`
+	CPU     string `json:"cpu"`
+	Memory  string `json:"memory"`
+	NetIO   string `json:"net_io"`
+	BlockIO string `json:"block_io"`
+	PIDs    string `json:"pids"`
+}
+
+// TopResultJSON is the data payload for top command JSON output
+type TopResultJSON struct {
+	Services []TopServiceJSON `json:"services"`
+}
+
 func runTop(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	console := output.NewWithOptions(verbose, quiet)
+	console := output.NewWithOutputMode(verbose, quiet, outputFormat)
+
+	// Load config to get project name
+	cfg, err := loadConfig()
+	if err != nil {
+		if console.IsJSONMode() {
+			console.EmitJSONError("top", err)
+			return err
+		}
+		console.ErrorWithHint(
+			fmt.Sprintf("Failed to load config: %s", err),
+			"Run 'cbox init' to create a cbox.yaml file",
+		)
+		return err
+	}
+
+	// JSON mode: get one snapshot (--no-stream), emit JSON, return
+	if console.IsJSONMode() {
+		return runTopJSON(ctx, console, cfg)
+	}
 
 	// Handle interrupt
 	sigCh := make(chan os.Signal, 1)
@@ -55,16 +91,6 @@ func runTop(cmd *cobra.Command, args []string) error {
 		<-sigCh
 		cancel()
 	}()
-
-	// Load config to get project name
-	cfg, err := loadConfig()
-	if err != nil {
-		console.ErrorWithHint(
-			fmt.Sprintf("Failed to load config: %s", err),
-			"Run 'cbox init' to create a cbox.yaml file",
-		)
-		return err
-	}
 
 	// Get container names for this project (with optional namespace filter)
 	statsArgs := []string{"stats",
@@ -127,6 +153,48 @@ func runTop(cmd *cobra.Command, args []string) error {
 	}
 
 	statsCmd.Wait()
+	return nil
+}
+
+// runTopJSON gets a single snapshot of stats and emits JSON
+func runTopJSON(ctx context.Context, console *output.Console, cfg *config.Config) error {
+	statsArgs := []string{"stats", "--no-stream",
+		"--format", `{"Name":"{{.Name}}","CPUPerc":"{{.CPUPerc}}","MemUsage":"{{.MemUsage}}","NetIO":"{{.NetIO}}","BlockIO":"{{.BlockIO}}","PIDs":"{{.PIDs}}"}`,
+		"--filter", fmt.Sprintf("label=cbox.project=%s", cfg.Project.Name),
+	}
+	if ns := GetNamespace(); ns != "" {
+		statsArgs = append(statsArgs, "--filter", fmt.Sprintf("label=cbox.namespace=%s", ns))
+	}
+
+	statsCmd := exec.CommandContext(ctx, "docker", statsArgs...)
+	out, err := statsCmd.Output()
+	if err != nil {
+		console.EmitJSONError("top", fmt.Errorf("failed to get docker stats: %w", err))
+		return err
+	}
+
+	var services []TopServiceJSON
+	scanner := bufio.NewScanner(strings.NewReader(string(out)))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+		var stats ContainerStats
+		if err := json.Unmarshal([]byte(line), &stats); err != nil {
+			continue
+		}
+		services = append(services, TopServiceJSON{
+			Name:    extractServiceName(stats.Name, cfg.Project.Name),
+			CPU:     stats.CPU,
+			Memory:  stats.Memory,
+			NetIO:   stats.NetIO,
+			BlockIO: stats.BlockIO,
+			PIDs:    stats.PIDs,
+		})
+	}
+
+	console.EmitJSON("top", TopResultJSON{Services: services}, nil)
 	return nil
 }
 

@@ -75,7 +75,7 @@ type Model struct {
 
 	// Dependencies
 	orch    *orchestrator.Orchestrator
-	docker  *runtime.Docker
+	docker  runtime.ContainerRuntime
 	cfg     *config.Config
 	console *output.Console
 }
@@ -109,7 +109,7 @@ type pollServicesMsg struct {
 }
 
 // pollServices polls service status and live resource metrics
-func pollServices(orch *orchestrator.Orchestrator, docker *runtime.Docker, projectName string) tea.Cmd {
+func pollServices(orch *orchestrator.Orchestrator, docker runtime.ContainerRuntime, projectName string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -252,7 +252,7 @@ type actionCompleteMsg struct {
 	err     error
 }
 
-func restartService(docker *runtime.Docker, projectName string, namespace string, name string) tea.Cmd {
+func restartService(docker runtime.ContainerRuntime, projectName string, namespace string, name string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -267,7 +267,7 @@ func restartService(docker *runtime.Docker, projectName string, namespace string
 	}
 }
 
-func stopService(docker *runtime.Docker, projectName string, namespace string, name string) tea.Cmd {
+func stopService(docker runtime.ContainerRuntime, projectName string, namespace string, name string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()

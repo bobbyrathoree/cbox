@@ -36,7 +36,7 @@ type Result struct {
 }
 
 // Diagnose runs diagnostics on all services.
-func Diagnose(ctx context.Context, cfg *config.Config, docker *runtime.Docker) (*Result, error) {
+func Diagnose(ctx context.Context, cfg *config.Config, docker runtime.ContainerRuntime) (*Result, error) {
 	result := &Result{
 		Issues:     []Issue{},
 		Healthy:    []string{},
@@ -104,7 +104,7 @@ func Diagnose(ctx context.Context, cfg *config.Config, docker *runtime.Docker) (
 }
 
 // runChecks runs all diagnostic checks for a service.
-func runChecks(ctx context.Context, cfg *config.Config, docker *runtime.Docker, name string, svc config.Service, container runtime.Container, serviceContainers map[string]runtime.Container) []Issue {
+func runChecks(ctx context.Context, cfg *config.Config, docker runtime.ContainerRuntime, name string, svc config.Service, container runtime.Container, serviceContainers map[string]runtime.Container) []Issue {
 	var issues []Issue
 
 	// Check 1: Restart count (crash loop detection)

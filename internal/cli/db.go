@@ -29,6 +29,9 @@ Examples:
   cbox db snapshot create fresh    Create a snapshot named "fresh"
   cbox db snapshot list            List all snapshots
   cbox db snapshot restore fresh   Restore the "fresh" snapshot`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return cmd.Help()
+	},
 }
 
 var dbShellCmd = &cobra.Command{
@@ -59,6 +62,9 @@ Examples:
   cbox db snapshot list            List all snapshots
   cbox db snapshot restore fresh   Restore the "fresh" snapshot
   cbox db snapshot delete fresh    Delete the "fresh" snapshot`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return cmd.Help()
+	},
 }
 
 var snapshotCreateCmd = &cobra.Command{
@@ -395,7 +401,7 @@ func extractDBName(env map[string]string, dbType db.DBType) string {
 }
 
 // findDBService finds the database service to use
-func findDBService(cfg *config.Config, serviceFlag string, docker *runtime.Docker, ctx context.Context) (serviceName, containerName string, dbType db.DBType, err error) {
+func findDBService(cfg *config.Config, serviceFlag string, docker runtime.ContainerRuntime, ctx context.Context) (serviceName, containerName string, dbType db.DBType, err error) {
 	if serviceFlag != "" {
 		// Use specified service
 		svc, ok := cfg.Services[serviceFlag]

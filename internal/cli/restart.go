@@ -36,11 +36,15 @@ func init() {
 
 func runRestart(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
-	console := output.NewWithOptions(verbose, quiet)
+	console := output.NewWithOutputMode(verbose, quiet, outputFormat)
 
 	// Load configuration
 	cfg, err := loadConfig()
 	if err != nil {
+		if console.IsJSONMode() {
+			console.EmitJSONError("restart", err)
+			return err
+		}
 		console.ErrorWithHint(
 			fmt.Sprintf("Failed to load config: %s", err),
 			"Run 'cbox init' to create a cbox.yaml file",
@@ -59,11 +63,19 @@ func runRestart(cmd *cobra.Command, args []string) error {
 	// Get containers for this project
 	containers, err := docker.ListContainers(ctx, labels, false) // Only running containers
 	if err != nil {
+		if console.IsJSONMode() {
+			console.EmitJSONError("restart", err)
+			return err
+		}
 		console.Error("Failed to list containers: %s", err)
 		return err
 	}
 
 	if len(containers) == 0 {
+		if console.IsJSONMode() {
+			console.EmitJSON("restart", map[string]interface{}{"restarted": []string{}}, nil)
+			return nil
+		}
 		console.Warn("No running services found for project %s", cfg.Project.Name)
 		console.Info("Run 'cbox up' to start services")
 		return nil
@@ -95,6 +107,10 @@ func runRestart(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(servicesToRestart) == 0 {
+		if console.IsJSONMode() {
+			console.EmitJSON("restart", map[string]interface{}{"restarted": []string{}}, nil)
+			return nil
+		}
 		console.Info("No services to restart")
 		return nil
 	}
@@ -102,16 +118,21 @@ func runRestart(cmd *cobra.Command, args []string) error {
 	console.Header("Restarting %d service(s)...", len(servicesToRestart))
 
 	// Restart each service
+	var restarted []string
 	for _, name := range servicesToRestart {
 		container := containerMap[name]
 		svc := cfg.Services[name]
 
-		spin := output.NewSpinner(fmt.Sprintf("Restarting %s...", name), false)
+		spin := output.NewSpinner(fmt.Sprintf("Restarting %s...", name), quiet || console.IsJSONMode())
 		spin.Start()
 
 		if err := docker.RestartContainer(ctx, container.Name, restartTimeout); err != nil {
 			spin.Fail(fmt.Sprintf("Failed to restart %s", name))
-			return fmt.Errorf("failed to restart %s: %w", name, err)
+			restartErr := fmt.Errorf("failed to restart %s: %w", name, err)
+			if console.IsJSONMode() {
+				console.EmitJSONError("restart", restartErr)
+			}
+			return restartErr
 		}
 
 		// Wait for healthy if healthcheck configured
@@ -124,6 +145,12 @@ func runRestart(cmd *cobra.Command, args []string) error {
 		}
 
 		spin.Success(fmt.Sprintf("Restarted %s", name))
+		restarted = append(restarted, name)
+	}
+
+	if console.IsJSONMode() {
+		console.EmitJSON("restart", map[string]interface{}{"restarted": restarted}, nil)
+		return nil
 	}
 
 	console.Success("Restart complete")

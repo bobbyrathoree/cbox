@@ -47,11 +47,15 @@ func init() {
 
 func runDeploy(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
-	console := output.NewWithOptions(verbose, quiet)
+	console := output.NewWithOutputMode(verbose, quiet, outputFormat)
 
 	// Load configuration
 	cfg, err := loadConfig()
 	if err != nil {
+		if console.IsJSONMode() {
+			console.EmitJSONError("deploy", err)
+			return err
+		}
 		console.ErrorWithHint(
 			fmt.Sprintf("Failed to load config: %s", err),
 			"Run 'cbox init' to create a cbox.yaml file",
@@ -63,6 +67,10 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	if deployEnv != "" {
 		cfg, err = cfg.WithEnvironment(deployEnv)
 		if err != nil {
+			if console.IsJSONMode() {
+				console.EmitJSONError("deploy", err)
+				return err
+			}
 			console.Error("Failed to apply environment %q: %s", deployEnv, err)
 			return err
 		}
@@ -71,6 +79,11 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 
 	// Check deploy configuration
 	if cfg.Deploy.Target == "" {
+		deployErr := fmt.Errorf("deploy target not configured")
+		if console.IsJSONMode() {
+			console.EmitJSONError("deploy", deployErr)
+			return deployErr
+		}
 		console.ErrorWithHint(
 			"No deployment target configured",
 			"Add a 'deploy' section to your cbox.yaml:\n\n"+
@@ -79,16 +92,21 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 				"  ecs:\n"+
 				"    region: us-west-2",
 		)
-		return fmt.Errorf("deploy target not configured")
+		return deployErr
 	}
 
 	// Check registry configuration (needed for image URLs)
 	if cfg.Registry.Type == "" {
+		regErr := fmt.Errorf("registry not configured")
+		if console.IsJSONMode() {
+			console.EmitJSONError("deploy", regErr)
+			return regErr
+		}
 		console.ErrorWithHint(
 			"No registry configured",
 			"Add a 'registry' section to your cbox.yaml to specify where images are stored",
 		)
-		return fmt.Errorf("registry not configured")
+		return regErr
 	}
 
 	// Create registry client for image names
@@ -171,6 +189,10 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	// Deploy
 	console.Header("Deploying to %s...", cfg.Deploy.Target)
 	if err := dep.Deploy(ctx, servicesToDeploy); err != nil {
+		if console.IsJSONMode() {
+			console.EmitJSONError("deploy", err)
+			return err
+		}
 		console.Error("Deployment failed: %s", err)
 		return err
 	}
@@ -183,6 +205,19 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 				console.Warn("Service %s may not be stable: %s", svc.Name, err)
 			}
 		}
+	}
+
+	if console.IsJSONMode() {
+		var deployedNames []string
+		for _, svc := range servicesToDeploy {
+			deployedNames = append(deployedNames, svc.Name)
+		}
+		console.EmitJSON("deploy", map[string]interface{}{
+			"deployed": deployedNames,
+			"target":   cfg.Deploy.Target,
+			"tag":      deployTag,
+		}, nil)
+		return nil
 	}
 
 	// Show status

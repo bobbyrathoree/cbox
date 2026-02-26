@@ -33,11 +33,15 @@ func init() {
 
 func runDown(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
-	console := output.NewWithOptions(verbose, quiet)
+	console := output.NewWithOutputMode(verbose, quiet, outputFormat)
 
 	// Load configuration
 	cfg, err := loadConfig()
 	if err != nil {
+		if console.IsJSONMode() {
+			console.EmitJSONError("down", err)
+			return err
+		}
 		console.ErrorWithHint(
 			fmt.Sprintf("Failed to load config: %s", err),
 			"Run 'cbox init' to create a cbox.yaml file",
@@ -64,7 +68,15 @@ func runDown(cmd *cobra.Command, args []string) error {
 	})
 
 	if err != nil {
+		if console.IsJSONMode() {
+			console.EmitJSONError("down", err)
+		}
 		return err
+	}
+
+	if console.IsJSONMode() {
+		console.EmitJSON("down", map[string]bool{"stopped": true}, nil)
+		return nil
 	}
 
 	console.Newline()

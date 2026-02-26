@@ -331,6 +331,6 @@ Based on: Value + Testability + Effort
 ## Non-Goals (For Now)
 
 - Kubernetes support (stay focused on local dev)
-- Cloud deployment (many tools do this)
+- Cloud deployment beyond AWS (focused on AWS ECS/Fargate for now)
 - GUI application (TUI is enough)
 - Plugin system (keep it simple)

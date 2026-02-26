@@ -32,7 +32,7 @@ func init() {
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
-	console := output.NewWithOptions(verbose, quiet)
+	console := output.NewWithOutputMode(verbose, quiet, outputFormat)
 
 	path := "."
 	if len(args) > 0 {
@@ -42,15 +42,24 @@ func runInit(cmd *cobra.Command, args []string) error {
 	// Get absolute path
 	absPath, err := filepath.Abs(path)
 	if err != nil {
+		if console.IsJSONMode() {
+			console.EmitJSONError("init", fmt.Errorf("invalid path: %w", err))
+			return err
+		}
 		return fmt.Errorf("invalid path: %w", err)
 	}
 
 	// Check if cbox.yaml already exists
 	configPath := filepath.Join(absPath, "cbox.yaml")
 	if _, err := os.Stat(configPath); err == nil && !initForce {
+		existsErr := fmt.Errorf("config already exists")
+		if console.IsJSONMode() {
+			console.EmitJSONError("init", existsErr)
+			return existsErr
+		}
 		console.Error("cbox.yaml already exists")
 		console.Info("Use --force to overwrite")
-		return fmt.Errorf("config already exists")
+		return existsErr
 	}
 
 	console.Info("Detecting project type...")
@@ -180,6 +189,14 @@ func runInit(cmd *cobra.Command, args []string) error {
 		} else {
 			console.Success("Created .dockerignore")
 		}
+	}
+
+	if console.IsJSONMode() {
+		console.EmitJSON("init", map[string]interface{}{
+			"created":  configPath,
+			"detected": detected,
+		}, nil)
+		return nil
 	}
 
 	console.Newline()

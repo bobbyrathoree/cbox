@@ -17,7 +17,7 @@ import (
 type Orchestrator struct {
 	config    *config.Config
 	builder   *builder.Builder
-	runtime   *runtime.Docker
+	runtime   runtime.ContainerRuntime
 	console   *output.Console
 	namespace string // Optional namespace for container isolation
 	mu        sync.Mutex

@@ -48,11 +48,15 @@ func init() {
 
 func runPush(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
-	console := output.NewWithOptions(verbose, quiet)
+	console := output.NewWithOutputMode(verbose, quiet, outputFormat)
 
 	// Load configuration
 	cfg, err := loadConfig()
 	if err != nil {
+		if console.IsJSONMode() {
+			console.EmitJSONError("push", err)
+			return err
+		}
 		console.ErrorWithHint(
 			fmt.Sprintf("Failed to load config: %s", err),
 			"Run 'cbox init' to create a cbox.yaml file",
@@ -62,6 +66,11 @@ func runPush(cmd *cobra.Command, args []string) error {
 
 	// Check registry configuration
 	if cfg.Registry.Type == "" {
+		regErr := fmt.Errorf("registry not configured")
+		if console.IsJSONMode() {
+			console.EmitJSONError("push", regErr)
+			return regErr
+		}
 		console.ErrorWithHint(
 			"No registry configured",
 			"Add a 'registry' section to your cbox.yaml:\n\n"+
@@ -69,7 +78,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 				"  type: ecr\n"+
 				"  region: us-west-2",
 		)
-		return fmt.Errorf("registry not configured")
+		return regErr
 	}
 
 	// Determine which services to push
@@ -93,12 +102,20 @@ func runPush(cmd *cobra.Command, args []string) error {
 	// Create registry client
 	reg, err := registry.New(&cfg.Registry, cfg.Project.Name, console)
 	if err != nil {
+		if console.IsJSONMode() {
+			console.EmitJSONError("push", err)
+			return err
+		}
 		console.Error("Failed to create registry client: %s", err)
 		return err
 	}
 
 	// Authenticate with registry
 	if err := reg.Authenticate(ctx); err != nil {
+		if console.IsJSONMode() {
+			console.EmitJSONError("push", err)
+			return err
+		}
 		console.Error("Failed to authenticate with registry: %s", err)
 		return err
 	}
@@ -178,6 +195,22 @@ func runPush(cmd *cobra.Command, args []string) error {
 			localName:  localImage,
 			remoteName: fullImage,
 		})
+	}
+
+	// JSON output mode
+	if console.IsJSONMode() {
+		var pushed []map[string]string
+		for _, img := range pushedImages {
+			pushed = append(pushed, map[string]string{
+				"local":  img.localName,
+				"remote": img.remoteName,
+			})
+		}
+		console.EmitJSON("push", map[string]interface{}{
+			"pushed": pushed,
+			"tag":    pushTag,
+		}, nil)
+		return nil
 	}
 
 	// Print summary section

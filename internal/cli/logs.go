@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"sort"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -76,6 +78,20 @@ func runLogs(cmd *cobra.Command, args []string) error {
 		projectPrefix = fmt.Sprintf("%s-%s", ns, cfg.Project.Name)
 	}
 
+	// Validate service names if provided
+	if len(args) > 0 {
+		for _, arg := range args {
+			if _, ok := cfg.Services[arg]; !ok {
+				available := make([]string, 0, len(cfg.Services))
+				for name := range cfg.Services {
+					available = append(available, name)
+				}
+				sort.Strings(available)
+				return fmt.Errorf("unknown service '%s' (available: %s)", arg, strings.Join(available, ", "))
+			}
+		}
+	}
+
 	// Determine which services to show logs from
 	services := args
 	if len(services) == 0 {
@@ -105,7 +121,7 @@ func runLogs(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func streamLogs(ctx context.Context, docker *runtime.Docker, containerName, serviceName string, console *output.Console, follow bool, tail int) error {
+func streamLogs(ctx context.Context, docker runtime.ContainerRuntime, containerName, serviceName string, console *output.Console, follow bool, tail int) error {
 	reader, err := docker.ContainerLogs(ctx, containerName, follow, tail)
 	if err != nil {
 		console.Error("Failed to get logs for %s: %s", serviceName, err)

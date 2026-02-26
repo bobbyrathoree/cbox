@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/bobbyrathore/cbox/internal/orchestrator"
@@ -58,6 +59,20 @@ func runPs(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Validate service names if provided
+	if len(args) > 0 {
+		for _, arg := range args {
+			if _, ok := cfg.Services[arg]; !ok {
+				available := make([]string, 0, len(cfg.Services))
+				for name := range cfg.Services {
+					available = append(available, name)
+				}
+				sort.Strings(available)
+				return fmt.Errorf("unknown service '%s' (available: %s)", arg, strings.Join(available, ", "))
+			}
+		}
+	}
+
 	// Create orchestrator (with namespace if specified)
 	var orch *orchestrator.Orchestrator
 	ns := GetNamespace()
@@ -75,6 +90,21 @@ func runPs(cmd *cobra.Command, args []string) error {
 			return err // Return error for proper exit code
 		}
 		return err
+	}
+
+	// Filter statuses if specific services were requested
+	if len(args) > 0 {
+		requested := make(map[string]bool, len(args))
+		for _, a := range args {
+			requested[a] = true
+		}
+		filtered := statuses[:0]
+		for _, s := range statuses {
+			if requested[s.Name] {
+				filtered = append(filtered, s)
+			}
+		}
+		statuses = filtered
 	}
 
 	// JSON output mode

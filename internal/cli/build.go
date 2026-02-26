@@ -55,11 +55,15 @@ func init() {
 
 func runBuild(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
-	console := output.NewWithOptions(verbose, quiet)
+	console := output.NewWithOutputMode(verbose, quiet, outputFormat)
 
 	// Load configuration with detection info
 	cfg, detection, err := loadConfigWithDetection()
 	if err != nil {
+		if console.IsJSONMode() {
+			console.EmitJSONError("build", err)
+			return err
+		}
 		console.ErrorWithHint(
 			fmt.Sprintf("Failed to load config: %s", err),
 			getConfigErrorHint(err),
@@ -113,6 +117,10 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(servicesToBuild) == 0 {
+		if console.IsJSONMode() {
+			console.EmitJSON("build", map[string]interface{}{"built": []string{}}, nil)
+			return nil
+		}
 		console.Info("No services to build")
 		return nil
 	}
@@ -121,10 +129,26 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	b := builder.New(console)
 
 	// Build services
+	var buildErr error
 	if buildParallel && len(servicesToBuild) > 1 {
-		return buildParallelServices(ctx, b, cfg, servicesToBuild, console)
+		buildErr = buildParallelServices(ctx, b, cfg, servicesToBuild, console)
+	} else {
+		buildErr = buildSequential(ctx, b, cfg, servicesToBuild, console)
 	}
-	return buildSequential(ctx, b, cfg, servicesToBuild, console)
+
+	if buildErr != nil {
+		if console.IsJSONMode() {
+			console.EmitJSONError("build", buildErr)
+		}
+		return buildErr
+	}
+
+	if console.IsJSONMode() {
+		console.EmitJSON("build", map[string]interface{}{"built": servicesToBuild}, nil)
+		return nil
+	}
+
+	return nil
 }
 
 func buildSequential(ctx context.Context, b *builder.Builder, cfg *config.Config, services []string, console *output.Console) error {

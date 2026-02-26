@@ -34,11 +34,15 @@ func init() {
 
 func runClean(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
-	console := output.NewWithOptions(verbose, quiet)
+	console := output.NewWithOutputMode(verbose, quiet, outputFormat)
 
 	// Load config to get project name
 	cfg, err := loadConfig()
 	if err != nil {
+		if console.IsJSONMode() {
+			console.EmitJSONError("clean", err)
+			return err
+		}
 		console.ErrorWithHint(
 			fmt.Sprintf("Failed to load config: %s", err),
 			"Run 'cbox init' to create a cbox.yaml file",
@@ -143,6 +147,14 @@ func runClean(cmd *cobra.Command, args []string) error {
 		} else {
 			console.Dim("No project volumes to remove")
 		}
+	}
+
+	if console.IsJSONMode() {
+		console.EmitJSON("clean", map[string]interface{}{
+			"cleaned":     true,
+			"space_freed": totalFreed,
+		}, nil)
+		return nil
 	}
 
 	console.Newline()

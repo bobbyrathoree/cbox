@@ -102,7 +102,7 @@ func (d *Docker) CreateNetwork(ctx context.Context, name string) error {
 	cmd = exec.CommandContext(ctx, "docker", "network", "create", name)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to create network: %s", string(output))
+		return fmt.Errorf("failed to create network: %s", sanitizeDockerError(string(output)))
 	}
 
 	return nil
@@ -117,7 +117,7 @@ func (d *Docker) RemoveNetwork(ctx context.Context, name string) error {
 		// Ignore "not found" errors - network might not exist
 		if !strings.Contains(string(output), "No such network") &&
 			!strings.Contains(string(output), "not found") {
-			return fmt.Errorf("failed to remove network %s: %s", name, strings.TrimSpace(string(output)))
+			return fmt.Errorf("failed to remove network %s: %s", name, sanitizeDockerError(string(output)))
 		}
 	}
 	return nil
@@ -198,7 +198,7 @@ func (d *Docker) CreateContainer(ctx context.Context, cfg ContainerConfig) (stri
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("failed to create container: %s", string(output))
+		return "", fmt.Errorf("failed to create container: %s", sanitizeDockerError(string(output)))
 	}
 
 	containerID := strings.TrimSpace(string(output))
@@ -211,7 +211,7 @@ func (d *Docker) StartContainer(ctx context.Context, nameOrID string) error {
 	cmd := exec.CommandContext(ctx, "docker", "start", nameOrID)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to start container: %s", string(output))
+		return fmt.Errorf("failed to start container: %s", sanitizeDockerError(string(output)))
 	}
 	return nil
 }
@@ -227,7 +227,7 @@ func (d *Docker) StopContainer(ctx context.Context, nameOrID string, timeout tim
 		outStr := string(output)
 		if !strings.Contains(outStr, "No such container") &&
 			!strings.Contains(outStr, "is not running") {
-			return fmt.Errorf("failed to stop container %s: %s", nameOrID, strings.TrimSpace(outStr))
+			return fmt.Errorf("failed to stop container %s: %s", nameOrID, sanitizeDockerError(outStr))
 		}
 	}
 	return nil
@@ -240,7 +240,7 @@ func (d *Docker) RestartContainer(ctx context.Context, nameOrID string, timeout 
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to restart container: %s", string(output))
+		return fmt.Errorf("failed to restart container: %s", sanitizeDockerError(string(output)))
 	}
 	return nil
 }
@@ -253,7 +253,7 @@ func (d *Docker) RemoveContainer(ctx context.Context, nameOrID string) error {
 	if err != nil {
 		// Ignore "not found" errors - container might not exist
 		if !strings.Contains(string(output), "No such container") {
-			return fmt.Errorf("failed to remove container %s: %s", nameOrID, strings.TrimSpace(string(output)))
+			return fmt.Errorf("failed to remove container %s: %s", nameOrID, sanitizeDockerError(string(output)))
 		}
 	}
 	return nil
@@ -371,7 +371,7 @@ func (d *Docker) ContainerExecWithOutput(ctx context.Context, nameOrID string, c
 	execCmd := exec.CommandContext(ctx, "docker", args...)
 	output, err := execCmd.CombinedOutput()
 	if err != nil {
-		return string(output), fmt.Errorf("exec failed: %w\nOutput: %s", err, string(output))
+		return string(output), fmt.Errorf("exec failed: %w\nOutput: %s", err, sanitizeDockerError(string(output)))
 	}
 	return string(output), nil
 }
@@ -397,7 +397,7 @@ func (d *Docker) ListContainers(ctx context.Context, labels map[string]string, a
 				return []Container{}, nil
 			}
 			// Real error - return it with stderr context
-			return nil, fmt.Errorf("docker ps failed: %s", stderr)
+			return nil, fmt.Errorf("docker ps failed: %s", sanitizeDockerError(stderr))
 		}
 		return nil, err
 	}
@@ -537,7 +537,7 @@ func (d *Docker) CreateVolume(ctx context.Context, name string) error {
 	cmd = exec.CommandContext(ctx, "docker", "volume", "create", name)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to create volume: %s", string(output))
+		return fmt.Errorf("failed to create volume: %s", sanitizeDockerError(string(output)))
 	}
 
 	return nil
@@ -551,7 +551,7 @@ func (d *Docker) RemoveVolume(ctx context.Context, name string) error {
 	if err != nil {
 		// Ignore "not found" errors - volume might not exist
 		if !strings.Contains(string(output), "No such volume") {
-			return fmt.Errorf("failed to remove volume %s: %s", name, strings.TrimSpace(string(output)))
+			return fmt.Errorf("failed to remove volume %s: %s", name, sanitizeDockerError(string(output)))
 		}
 	}
 	return nil
@@ -616,7 +616,7 @@ func (d *Docker) PullImage(ctx context.Context, image string) error {
 	cmd := exec.CommandContext(ctx, "docker", "pull", image)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to pull image: %s", string(output))
+		return fmt.Errorf("failed to pull image: %s", sanitizeDockerError(string(output)))
 	}
 	return nil
 }
@@ -736,4 +736,35 @@ func ContainerConfigFromService(
 	}
 
 	return cfg
+}
+
+// sanitizeDockerError translates raw Docker daemon output into user-friendly messages.
+func sanitizeDockerError(raw string) string {
+	msg := strings.TrimSpace(raw)
+	msg = strings.TrimPrefix(msg, "Error response from daemon: ")
+
+	switch {
+	case strings.Contains(msg, "No such container"):
+		if i := strings.LastIndex(msg, ": "); i != -1 {
+			name := strings.TrimSpace(msg[i+2:])
+			return fmt.Sprintf("container '%s' not found (is the service running?)", name)
+		}
+		return "container not found (is the service running?)"
+	case strings.Contains(msg, "No such image"):
+		return "image not found (run 'cbox build' first)"
+	case strings.Contains(msg, "network") && strings.Contains(msg, "not found"):
+		return "network not found (run 'cbox up' to create it)"
+	case strings.Contains(msg, "port is already allocated"):
+		return "port conflict: another process is using this port"
+	case strings.Contains(msg, "Conflict") && strings.Contains(msg, "container name"):
+		return "container already exists (run 'cbox down' first)"
+	case strings.Contains(msg, "No space left on device"):
+		return "no disk space left (run 'cbox clean' to free space)"
+	case strings.Contains(msg, "permission denied"):
+		return "permission denied (check Docker socket permissions)"
+	case strings.Contains(msg, "Cannot connect to the Docker daemon"):
+		return "Docker is not running (start Docker Desktop or the Docker daemon)"
+	}
+
+	return msg
 }

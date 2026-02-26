@@ -23,6 +23,9 @@ Examples:
   cbox compose import                  Import docker-compose.yaml
   cbox compose import -f compose.yml   Import specific file
   cbox compose import --force          Overwrite existing cbox.yaml`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return cmd.Help()
+	},
 }
 
 var composeImportCmd = &cobra.Command{

@@ -15,6 +15,12 @@ var (
 	waitTimeout time.Duration
 )
 
+// WaitResultJSON is the data payload for wait command JSON output
+type WaitResultJSON struct {
+	Healthy []string `json:"healthy"`
+	Failed  []string `json:"failed,omitempty"`
+}
+
 var waitCmd = &cobra.Command{
 	Use:   "wait [service...]",
 	Short: "Wait for services to be healthy",
@@ -43,11 +49,15 @@ func runWait(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout)
 	defer cancel()
 
-	console := output.NewWithOptions(verbose, quiet)
+	console := output.NewWithOutputMode(verbose, quiet, outputFormat)
 
 	// Load configuration
 	cfg, err := loadConfig()
 	if err != nil {
+		if console.IsJSONMode() {
+			console.EmitJSONError("wait", err)
+			return err
+		}
 		console.ErrorWithHint(
 			fmt.Sprintf("Failed to load config: %s", err),
 			"Run 'cbox init' to create a cbox.yaml file",
@@ -60,14 +70,23 @@ func runWait(cmd *cobra.Command, args []string) error {
 	// Get containers for this project
 	containers, err := docker.ListContainers(ctx, NamespaceLabels(cfg.Project.Name), false) // Only running containers
 	if err != nil {
+		if console.IsJSONMode() {
+			console.EmitJSONError("wait", err)
+			return err
+		}
 		console.Error("Failed to list containers: %s", err)
 		return err
 	}
 
 	if len(containers) == 0 {
+		noRunningErr := fmt.Errorf("no running services")
+		if console.IsJSONMode() {
+			console.EmitJSONError("wait", noRunningErr)
+			return noRunningErr
+		}
 		console.Error("No running services found for project %s", cfg.Project.Name)
 		console.Info("Run 'cbox up' to start services first")
-		return fmt.Errorf("no running services")
+		return noRunningErr
 	}
 
 	// Build map of service name -> container name
@@ -149,6 +168,30 @@ func runWait(cmd *cobra.Command, args []string) error {
 	var errors []error
 	for err := range errCh {
 		errors = append(errors, err)
+	}
+
+	// Collect failed service names for JSON output
+	var failed []string
+	for _, err := range errors {
+		failed = append(failed, err.Error())
+	}
+
+	// JSON output mode
+	if console.IsJSONMode() {
+		result := WaitResultJSON{
+			Healthy: healthy,
+			Failed:  failed,
+		}
+		if len(errors) > 0 {
+			var jsonErrs []output.JSONError
+			for _, e := range errors {
+				jsonErrs = append(jsonErrs, output.JSONError{Message: e.Error()})
+			}
+			console.EmitJSON("wait", result, jsonErrs)
+			return fmt.Errorf("some services failed health check")
+		}
+		console.EmitJSON("wait", result, nil)
+		return nil
 	}
 
 	// Report results

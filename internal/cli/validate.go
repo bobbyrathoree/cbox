@@ -13,6 +13,15 @@ var (
 	validateStrict bool
 )
 
+// ValidateResultJSON is the data payload for validate command JSON output
+type ValidateResultJSON struct {
+	Valid    bool     `json:"valid"`
+	Project  string  `json:"project"`
+	Services int     `json:"services"`
+	Errors   []string `json:"errors,omitempty"`
+	Warnings []string `json:"warnings,omitempty"`
+}
+
 var validateCmd = &cobra.Command{
 	Use:   "validate",
 	Short: "Validate cbox.yaml configuration",
@@ -42,12 +51,16 @@ func init() {
 }
 
 func runValidate(cmd *cobra.Command, args []string) error {
-	console := output.NewWithOptions(verbose, quiet)
+	console := output.NewWithOutputMode(verbose, quiet, outputFormat)
 
 	configPath := GetConfigFile()
 
 	// Check if config exists
 	if !config.Exists(configPath) {
+		if console.IsJSONMode() {
+			console.EmitJSONError("validate", fmt.Errorf("config file not found: %s", configPath))
+			return fmt.Errorf("config file not found")
+		}
 		console.Error("Configuration file not found: %s", configPath)
 		console.Info("Run 'cbox init' to create a configuration file")
 		return fmt.Errorf("config file not found")
@@ -56,6 +69,10 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	// Try to load config (this validates YAML, env vars, secrets, dependencies)
 	cfg, err := config.Load(configPath)
 	if err != nil {
+		if console.IsJSONMode() {
+			console.EmitJSONError("validate", err)
+			return err
+		}
 		console.Error("Configuration invalid")
 		console.Error("  %s", err)
 		return err
@@ -151,15 +168,46 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Determine exit status
+	hasErrors := len(errors) > 0
+	hasWarnings := len(warnings) > 0
+
+	// JSON output mode
+	if console.IsJSONMode() {
+		isValid := !hasErrors && !(validateStrict && hasWarnings)
+		result := ValidateResultJSON{
+			Valid:    isValid,
+			Project:  cfg.Project.Name,
+			Services: len(cfg.Services),
+			Errors:   errors,
+			Warnings: warnings,
+		}
+		if !isValid {
+			var jsonErrs []output.JSONError
+			for _, e := range errors {
+				jsonErrs = append(jsonErrs, output.JSONError{Message: e})
+			}
+			if validateStrict {
+				for _, w := range warnings {
+					jsonErrs = append(jsonErrs, output.JSONError{Message: w})
+				}
+			}
+			console.EmitJSON("validate", result, jsonErrs)
+			os.Exit(1)
+		}
+		console.EmitJSON("validate", result, nil)
+		return nil
+	}
+
 	// Report results
-	if len(errors) > 0 {
+	if hasErrors {
 		console.Error("Configuration has errors:")
 		for _, e := range errors {
 			console.Error("  ✗ %s", e)
 		}
 	}
 
-	if len(warnings) > 0 {
+	if hasWarnings {
 		if validateStrict {
 			console.Error("Configuration has warnings (strict mode):")
 		} else {
@@ -169,10 +217,6 @@ func runValidate(cmd *cobra.Command, args []string) error {
 			console.Warn("  ⚠ %s", w)
 		}
 	}
-
-	// Determine exit status
-	hasErrors := len(errors) > 0
-	hasWarnings := len(warnings) > 0
 
 	if hasErrors || (validateStrict && hasWarnings) {
 		os.Exit(1)

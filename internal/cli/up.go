@@ -53,11 +53,20 @@ func init() {
 
 func runUp(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
-	console := output.NewWithOptions(verbose, quiet)
+	console := output.NewWithOutputMode(verbose, quiet, outputFormat)
+
+	// In JSON mode, force detached mode (no log streaming)
+	if console.IsJSONMode() {
+		upDetach = true
+	}
 
 	// Load configuration
 	cfg, err := loadConfig()
 	if err != nil {
+		if console.IsJSONMode() {
+			console.EmitJSONError("up", err)
+			return err
+		}
 		console.ErrorWithHint(
 			fmt.Sprintf("Failed to load config: %s", err),
 			"Run 'cbox init' to create a cbox.yaml file",
@@ -69,6 +78,10 @@ func runUp(cmd *cobra.Command, args []string) error {
 	if upEnv != "" {
 		cfg, err = cfg.WithEnvironment(upEnv)
 		if err != nil {
+			if console.IsJSONMode() {
+				console.EmitJSONError("up", err)
+				return err
+			}
 			console.Error("Failed to apply environment %q: %s", upEnv, err)
 			return err
 		}
@@ -98,7 +111,15 @@ func runUp(cmd *cobra.Command, args []string) error {
 	})
 
 	if err != nil {
+		if console.IsJSONMode() {
+			console.EmitJSONError("up", err)
+		}
 		return err
+	}
+
+	if console.IsJSONMode() {
+		console.EmitJSON("up", map[string]interface{}{"started": true}, nil)
+		return nil
 	}
 
 	console.Newline()
@@ -137,7 +158,7 @@ func runUp(cmd *cobra.Command, args []string) error {
 }
 
 // streamAllLogs streams logs from all services concurrently.
-func streamAllLogs(ctx context.Context, cfg *config.Config, docker *runtime.Docker, console *output.Console, namespace string) {
+func streamAllLogs(ctx context.Context, cfg *config.Config, docker runtime.ContainerRuntime, console *output.Console, namespace string) {
 	var wg sync.WaitGroup
 	for name := range cfg.Services {
 		wg.Add(1)
