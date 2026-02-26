@@ -26,12 +26,27 @@ func TestNewSnapshotManager(t *testing.T) {
 func TestSnapshotManager_snapshotDir(t *testing.T) {
 	mgr := NewSnapshotManager()
 
-	dir := mgr.snapshotDir("myproject", "postgres", "fresh")
+	dir, err := mgr.snapshotDir("myproject", "postgres", "fresh")
+	if err != nil {
+		t.Fatalf("snapshotDir() error = %v", err)
+	}
 
 	home, _ := os.UserHomeDir()
 	expected := filepath.Join(home, ".cbox", "snapshots", "myproject", "postgres", "fresh")
 	if dir != expected {
 		t.Errorf("snapshotDir() = %v, want %v", dir, expected)
+	}
+}
+
+func TestSnapshotManager_snapshotDir_Traversal(t *testing.T) {
+	mgr := NewSnapshotManager()
+
+	cases := []string{"../../etc/shadow", "../escape", "/absolute", "has spaces", ""}
+	for _, name := range cases {
+		_, err := mgr.snapshotDir("myproject", "postgres", name)
+		if err == nil {
+			t.Errorf("snapshotDir(%q) should have returned error", name)
+		}
 	}
 }
 

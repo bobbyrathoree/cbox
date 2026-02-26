@@ -282,57 +282,115 @@ func (c *Config) DeepCopy() *Config {
 		return nil
 	}
 
-	copy := &Config{
-		Version: c.Version,
-		Project: c.Project,
+	newCfg := &Config{
+		Version:  c.Version,
+		Project:  c.Project,
 		Registry: c.Registry,
 		Deploy:   c.Deploy,
 	}
 
 	// Copy services
 	if c.Services != nil {
-		copy.Services = make(map[string]Service, len(c.Services))
+		newCfg.Services = make(map[string]Service, len(c.Services))
 		for k, v := range c.Services {
 			svcCopy := v
+
+			// Deep copy slices
+			if v.Command != nil {
+				svcCopy.Command = make([]string, len(v.Command))
+				copy(svcCopy.Command, v.Command)
+			}
+			if v.DependsOn != nil {
+				svcCopy.DependsOn = make([]string, len(v.DependsOn))
+				copy(svcCopy.DependsOn, v.DependsOn)
+			}
+			if v.Secrets != nil {
+				svcCopy.Secrets = make([]string, len(v.Secrets))
+				copy(svcCopy.Secrets, v.Secrets)
+			}
+			if v.Volumes != nil {
+				svcCopy.Volumes = make([]string, len(v.Volumes))
+				copy(svcCopy.Volumes, v.Volumes)
+			}
+			if v.Expose != nil {
+				svcCopy.Expose = make([]int, len(v.Expose))
+				copy(svcCopy.Expose, v.Expose)
+			}
+
+			// Deep copy maps
 			if v.Env != nil {
 				svcCopy.Env = make(map[string]string, len(v.Env))
 				for ek, ev := range v.Env {
 					svcCopy.Env[ek] = ev
 				}
 			}
+			if v.Build.Args != nil {
+				svcCopy.Build.Args = make(map[string]string, len(v.Build.Args))
+				for bk, bv := range v.Build.Args {
+					svcCopy.Build.Args[bk] = bv
+				}
+			}
+
+			// Deep copy nested slices in Dev
+			if v.Dev.Command != nil {
+				svcCopy.Dev.Command = make([]string, len(v.Dev.Command))
+				copy(svcCopy.Dev.Command, v.Dev.Command)
+			}
+			if v.Dev.Watch.Paths != nil {
+				svcCopy.Dev.Watch.Paths = make([]string, len(v.Dev.Watch.Paths))
+				copy(svcCopy.Dev.Watch.Paths, v.Dev.Watch.Paths)
+			}
+			if v.Dev.Watch.Ignore != nil {
+				svcCopy.Dev.Watch.Ignore = make([]string, len(v.Dev.Watch.Ignore))
+				copy(svcCopy.Dev.Watch.Ignore, v.Dev.Watch.Ignore)
+			}
+
+			// Deep copy pointers
 			if v.Deploy != nil {
 				deployCopy := *v.Deploy
 				svcCopy.Deploy = &deployCopy
 			}
-			copy.Services[k] = svcCopy
+			if v.Resources != nil {
+				resCopy := *v.Resources
+				svcCopy.Resources = &resCopy
+			}
+
+			newCfg.Services[k] = svcCopy
 		}
 	}
 
 	// Copy volumes
 	if c.Volumes != nil {
-		copy.Volumes = make(map[string]Volume, len(c.Volumes))
+		newCfg.Volumes = make(map[string]Volume, len(c.Volumes))
 		for k, v := range c.Volumes {
-			copy.Volumes[k] = v
+			volCopy := v
+			if v.DriverOpts != nil {
+				volCopy.DriverOpts = make(map[string]string, len(v.DriverOpts))
+				for dk, dv := range v.DriverOpts {
+					volCopy.DriverOpts[dk] = dv
+				}
+			}
+			newCfg.Volumes[k] = volCopy
 		}
 	}
 
 	// Copy secrets
 	if c.Secrets != nil {
-		copy.Secrets = make(map[string]Secret, len(c.Secrets))
+		newCfg.Secrets = make(map[string]Secret, len(c.Secrets))
 		for k, v := range c.Secrets {
-			copy.Secrets[k] = v
+			newCfg.Secrets[k] = v
 		}
 	}
 
 	// Copy environments
 	if c.Environments != nil {
-		copy.Environments = make(map[string]EnvironmentConfig, len(c.Environments))
+		newCfg.Environments = make(map[string]EnvironmentConfig, len(c.Environments))
 		for k, v := range c.Environments {
-			copy.Environments[k] = v
+			newCfg.Environments[k] = v
 		}
 	}
 
-	return copy
+	return newCfg
 }
 
 // HasEnvironment returns true if the named environment is defined.

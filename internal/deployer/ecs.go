@@ -316,6 +316,11 @@ func (d *ECSDeployer) registerTaskDefinition(ctx context.Context, svc ServiceDep
 	cpu, memory := validateFargateResources(svc.CPU, svc.Memory)
 
 	// Register the task definition
+	executionRole := d.getExecutionRoleArn()
+	if executionRole == nil {
+		return "", fmt.Errorf("execution_role_arn is required for ECS deployment; set deploy.ecs.execution_role_arn in cbox.yaml (e.g., arn:aws:iam::<account-id>:role/ecsTaskExecutionRole)")
+	}
+
 	family := fmt.Sprintf("%s-%s", d.projectName, svc.Name)
 	result, err := d.ecsClient.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
 		Family:                  aws.String(family),
@@ -324,7 +329,7 @@ func (d *ECSDeployer) registerTaskDefinition(ctx context.Context, svc ServiceDep
 		NetworkMode:             types.NetworkModeAwsvpc,
 		Cpu:                     aws.String(fmt.Sprintf("%d", cpu)),
 		Memory:                  aws.String(fmt.Sprintf("%d", memory)),
-		ExecutionRoleArn:        d.getExecutionRoleArn(),
+		ExecutionRoleArn:        executionRole,
 		TaskRoleArn:             d.getTaskRoleArn(),
 	})
 	if err != nil {
@@ -399,8 +404,7 @@ func (d *ECSDeployer) getExecutionRoleArn() *string {
 	if d.config.ExecutionRoleARN != "" {
 		return aws.String(d.config.ExecutionRoleARN)
 	}
-	// Use default ECS task execution role
-	return aws.String("arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy")
+	return nil
 }
 
 // getTaskRoleArn returns the task role ARN.

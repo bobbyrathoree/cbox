@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bobbyrathore/cbox/internal/config"
@@ -298,32 +300,45 @@ func (d *Docker) ContainerLogs(ctx context.Context, nameOrID string, follow bool
 		return nil, err
 	}
 
-	// Combine stdout and stderr
+	// Multiplex stdout and stderr into a single pipe
+	pr, pw := io.Pipe()
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		io.Copy(pw, stdout)
+	}()
+	go func() {
+		defer wg.Done()
+		io.Copy(pw, stderr)
+	}()
+
+	go func() {
+		wg.Wait()
+		pw.Close()
+	}()
+
 	return &combinedReadCloser{
-		stdout: stdout,
-		stderr: stderr,
+		reader: pr,
 		cmd:    cmd,
 	}, nil
 }
 
 type combinedReadCloser struct {
-	stdout io.ReadCloser
-	stderr io.ReadCloser
+	reader io.ReadCloser
 	cmd    *exec.Cmd
+	once   sync.Once
 }
 
 func (c *combinedReadCloser) Read(p []byte) (int, error) {
-	// Read from stdout first, then stderr
-	n, err := c.stdout.Read(p)
-	if err == io.EOF {
-		return c.stderr.Read(p)
-	}
-	return n, err
+	return c.reader.Read(p)
 }
 
 func (c *combinedReadCloser) Close() error {
-	c.stdout.Close()
-	c.stderr.Close()
+	c.once.Do(func() {
+		c.reader.Close()
+	})
 	return c.cmd.Wait()
 }
 
@@ -340,9 +355,9 @@ func (d *Docker) ContainerExec(ctx context.Context, nameOrID string, cmd []strin
 	args = append(args, cmd...)
 
 	execCmd := exec.CommandContext(ctx, "docker", args...)
-	execCmd.Stdin = nil // TODO: Connect to terminal if interactive
-	execCmd.Stdout = nil
-	execCmd.Stderr = nil
+	execCmd.Stdin = os.Stdin
+	execCmd.Stdout = os.Stdout
+	execCmd.Stderr = os.Stderr
 
 	return execCmd.Run()
 }

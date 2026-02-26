@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -20,11 +21,30 @@ var validate = validator.New()
 
 // Load reads and parses a cbox.yaml file from the given path.
 func Load(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
+	const maxConfigSize = 10 * 1024 * 1024 // 10MB
+
+	file, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("config file not found: %s", path)
 		}
+		return nil, fmt.Errorf("failed to read config: %w", err)
+	}
+	defer file.Close()
+
+	stat, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat config: %w", err)
+	}
+	if !stat.Mode().IsRegular() {
+		return nil, fmt.Errorf("config path is not a regular file: %s", path)
+	}
+	if stat.Size() > maxConfigSize {
+		return nil, fmt.Errorf("config file too large: %d bytes (max %d)", stat.Size(), maxConfigSize)
+	}
+
+	data, err := io.ReadAll(io.LimitReader(file, maxConfigSize+1))
+	if err != nil {
 		return nil, fmt.Errorf("failed to read config: %w", err)
 	}
 

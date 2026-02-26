@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"time"
 )
@@ -38,9 +39,16 @@ func NewSnapshotManager() *SnapshotManager {
 	}
 }
 
+var validSnapshotName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
+
 // snapshotDir returns the directory for a specific snapshot
-func (m *SnapshotManager) snapshotDir(project, service, name string) string {
-	return filepath.Join(m.baseDir, project, service, name)
+func (m *SnapshotManager) snapshotDir(project, service, name string) (string, error) {
+	for _, component := range []string{project, service, name} {
+		if component != filepath.Base(component) || !validSnapshotName.MatchString(component) {
+			return "", fmt.Errorf("invalid name %q: must be alphanumeric with ._- only", component)
+		}
+	}
+	return filepath.Join(m.baseDir, project, service, name), nil
 }
 
 // Create creates a new snapshot
@@ -49,7 +57,10 @@ func (m *SnapshotManager) Create(ctx context.Context, project, service, containe
 		return fmt.Errorf("snapshot not supported for %s", dbType)
 	}
 
-	dir := m.snapshotDir(project, service, name)
+	dir, err := m.snapshotDir(project, service, name)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create snapshot directory: %w", err)
 	}
@@ -132,7 +143,10 @@ func (m *SnapshotManager) Restore(ctx context.Context, project, service, contain
 		return fmt.Errorf("restore not supported for %s", dbType)
 	}
 
-	dir := m.snapshotDir(project, service, name)
+	dir, err := m.snapshotDir(project, service, name)
+	if err != nil {
+		return err
+	}
 
 	// Check if snapshot exists and read metadata
 	metaFile := filepath.Join(dir, "meta.json")
@@ -238,7 +252,10 @@ func (m *SnapshotManager) List(project, service string) ([]SnapshotMeta, error) 
 
 // Delete deletes a snapshot
 func (m *SnapshotManager) Delete(project, service, name string) error {
-	dir := m.snapshotDir(project, service, name)
+	dir, err := m.snapshotDir(project, service, name)
+	if err != nil {
+		return err
+	}
 
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		return fmt.Errorf("snapshot '%s' not found", name)

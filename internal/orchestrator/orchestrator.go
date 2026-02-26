@@ -20,6 +20,7 @@ type Orchestrator struct {
 	runtime   *runtime.Docker
 	console   *output.Console
 	namespace string // Optional namespace for container isolation
+	mu        sync.Mutex
 }
 
 // New creates a new Orchestrator.
@@ -143,7 +144,9 @@ func (o *Orchestrator) startServiceLevel(ctx context.Context, services []string,
 		go func(serviceName string) {
 			defer wg.Done()
 
+			o.mu.Lock()
 			svc := o.config.Services[serviceName]
+			o.mu.Unlock()
 			containerName := o.containerName(serviceName)
 
 			// Check if container already exists (idempotency)
@@ -206,7 +209,9 @@ func (o *Orchestrator) startServiceLevel(ctx context.Context, services []string,
 					// Store alternate host port separately - don't overwrite original Port
 					// which is the port the app listens on inside the container
 					svc.HostPort = newPort
+					o.mu.Lock()
 					o.config.Services[serviceName] = svc
+					o.mu.Unlock()
 				}
 			}
 

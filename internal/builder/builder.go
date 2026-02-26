@@ -250,7 +250,7 @@ func (b *Builder) runBuild(ctx context.Context, contextPath, dockerfile, imageNa
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 	} else {
-		cmd.Stdout = &buildOutput
+		cmd.Stdout = os.Stdout
 		cmd.Stderr = &cacheWarningFilter{out: &buildOutput}
 	}
 

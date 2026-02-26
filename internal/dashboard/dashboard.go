@@ -200,14 +200,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Restart selected service
 			if m.selected < len(m.services) {
 				svc := m.services[m.selected]
-				return m, restartService(m.orch, m.cfg, svc.Name)
+				return m, restartService(m.docker, m.projectName, m.orch.GetNamespace(), svc.Name)
 			}
 
 		case "s":
 			// Stop selected service
 			if m.selected < len(m.services) {
 				svc := m.services[m.selected]
-				return m, stopService(m.orch, svc.Name)
+				return m, stopService(m.docker, m.projectName, m.orch.GetNamespace(), svc.Name)
 			}
 
 		case "u":
@@ -252,28 +252,33 @@ type actionCompleteMsg struct {
 	err     error
 }
 
-func restartService(orch *orchestrator.Orchestrator, cfg *config.Config, name string) tea.Cmd {
+func restartService(docker *runtime.Docker, projectName string, namespace string, name string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		// Stop
-		orch.Down(ctx, orchestrator.DownOptions{})
-		// Start
-		orch.Up(ctx, orchestrator.UpOptions{Services: []string{name}})
+		containerName := projectName + "_" + name
+		if namespace != "" {
+			containerName = namespace + "-" + projectName + "_" + name
+		}
+		err := docker.RestartContainer(ctx, containerName, 10*time.Second)
 
-		return actionCompleteMsg{action: "restart", service: name}
+		return actionCompleteMsg{action: "restart", service: name, err: err}
 	}
 }
 
-func stopService(orch *orchestrator.Orchestrator, name string) tea.Cmd {
+func stopService(docker *runtime.Docker, projectName string, namespace string, name string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		orch.Down(ctx, orchestrator.DownOptions{})
+		containerName := projectName + "_" + name
+		if namespace != "" {
+			containerName = namespace + "-" + projectName + "_" + name
+		}
+		err := docker.StopContainer(ctx, containerName, 10*time.Second)
 
-		return actionCompleteMsg{action: "stop", service: name}
+		return actionCompleteMsg{action: "stop", service: name, err: err}
 	}
 }
 
