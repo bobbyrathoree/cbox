@@ -20,6 +20,7 @@ type Watcher struct {
 	onChange func(path string, isConfig bool)
 	mu       sync.Mutex
 	lastFire time.Time
+	paused   bool // When true, events are silently dropped
 }
 
 // NewWatcher creates a new file watcher.
@@ -56,6 +57,20 @@ func (w *Watcher) Start() error {
 // Stop stops the watcher.
 func (w *Watcher) Stop() {
 	w.watcher.Close()
+}
+
+// Pause silently drops all file change events until Resume is called.
+func (w *Watcher) Pause() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.paused = true
+}
+
+// Resume re-enables file change event processing after a Pause.
+func (w *Watcher) Resume() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.paused = false
 }
 
 func (w *Watcher) addPath(path string) error {
@@ -152,6 +167,14 @@ func (w *Watcher) loop() {
 				continue
 			}
 			w.lastFire = time.Now()
+			w.mu.Unlock()
+
+			// Check if paused (during hot-patching)
+			w.mu.Lock()
+			if w.paused {
+				w.mu.Unlock()
+				continue
+			}
 			w.mu.Unlock()
 
 			// Determine if this is a config file change

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -31,6 +32,13 @@ type DevLoop struct {
 	// For signal handling and cleanup
 	startedServices []string
 	cleanupOnce     sync.Once
+
+	// Background rebuild context for hot-patching
+	buildCtx    context.Context
+	buildCancel context.CancelFunc
+
+	// Intelligence panel for live status display
+	panel *Panel
 }
 
 // Options contains options for dev mode.
@@ -55,6 +63,9 @@ func (d *DevLoop) Start(ctx context.Context, opts Options) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// Initialize the intelligence panel (auto-detects TTY)
+	d.panel = NewPanel()
+
 	// Determine services
 	services := opts.Services
 	if len(services) == 0 {
@@ -71,6 +82,9 @@ func (d *DevLoop) Start(ctx context.Context, opts Options) error {
 	// Cleanup function that ensures containers are stopped
 	cleanup := func() {
 		d.cleanupOnce.Do(func() {
+			// Restore terminal before printing shutdown messages
+			d.panel.TeardownScrollRegion()
+
 			d.console.Info("Stopping services...")
 			d.stopWatchers()
 
@@ -138,6 +152,14 @@ func (d *DevLoop) Start(ctx context.Context, opts Options) error {
 	// Print dev mode info
 	d.printDevInfo(services)
 
+	// Set up the intelligence panel (persistent 2-line HUD)
+	d.panel.SetupScrollRegion()
+
+	// Start background polling for service stats
+	if d.panel.IsEnabled() {
+		go d.pollServiceStats(ctx)
+	}
+
 	// Stream logs from all services
 	go d.streamAllLogs(ctx, services)
 
@@ -194,15 +216,23 @@ func (d *DevLoop) setupWatcher(ctx context.Context, svcName string, svc config.S
 }
 
 func (d *DevLoop) handleFileChange(ctx context.Context, svcName string, svc config.Service, path string, isConfig, noSync bool) {
-	relPath := path
-	if wd, err := os.Getwd(); err == nil {
-		if rel, err := filepath.Rel(wd, path); err == nil {
-			relPath = rel
-		}
+	relPath, err := filepath.Rel(".", path)
+	if err != nil {
+		relPath = path
 	}
 
 	if isConfig {
-		// Config/dependency file changed - need to rebuild
+		// Try hot-patching first (much faster than rebuild)
+		containerName := fmt.Sprintf("%s_%s", d.config.Project.Name, svcName)
+		if d.runtime.IsContainerRunning(context.Background(), containerName) {
+			d.console.ServiceLog(svcName, fmt.Sprintf("Config changed: %s - hot-patching...", relPath))
+			if err := d.hotPatchDeps(svcName, svc, containerName); err != nil {
+				d.console.ServiceLog(svcName, fmt.Sprintf("Hot-patch failed: %s - falling back to rebuild", err))
+				d.rebuildAndRestart(ctx, svcName, svc)
+			}
+			return
+		}
+		// Container not running, do full rebuild
 		d.console.ServiceLog(svcName, fmt.Sprintf("Config changed: %s - rebuilding...", relPath))
 		d.rebuildAndRestart(ctx, svcName, svc)
 	} else if noSync {
@@ -266,6 +296,104 @@ func (d *DevLoop) rebuildAndRestart(ctx context.Context, svcName string, svc con
 	d.console.Success("Restarted %s", svcName)
 }
 
+// hotPatchDeps installs dependencies inside a running container without rebuilding.
+func (d *DevLoop) hotPatchDeps(svcName string, svc config.Service, containerName string) error {
+	// Determine the install command based on runtime
+	installCmd := d.getInstallCommand(svc)
+	if installCmd == "" {
+		return fmt.Errorf("unknown runtime for hot-patching: %s", svc.Runtime)
+	}
+
+	// Pause watchers to prevent infinite loop from lock file changes
+	d.pauseWatchers()
+
+	// Run install command inside container
+	start := time.Now()
+	output, err := d.runtime.ContainerExecWithOutput(
+		context.Background(),
+		containerName,
+		installCmd,
+	)
+	if err != nil {
+		d.resumeWatchers()
+		return fmt.Errorf("install failed: %w (output: %s)", err, output)
+	}
+
+	elapsed := time.Since(start)
+	d.console.ServiceLog(svcName, fmt.Sprintf("Dependencies updated in %.1fs", elapsed.Seconds()))
+
+	// Wait for bind mount to sync lock files back, then resume watcher
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		d.resumeWatchers()
+	}()
+
+	// Background rebuild to keep image in sync (cancellable)
+	d.triggerBackgroundRebuild(svcName, svc)
+
+	return nil
+}
+
+// getInstallCommand returns the package manager install command for a runtime.
+func (d *DevLoop) getInstallCommand(svc config.Service) string {
+	switch svc.Runtime {
+	case "nodejs", "node":
+		// Check for lock files to determine package manager
+		// Default to npm
+		return "npm install"
+	case "go", "golang":
+		return "go mod tidy && go mod download"
+	case "python":
+		return "pip install -r requirements.txt"
+	default:
+		return ""
+	}
+}
+
+// triggerBackgroundRebuild silently rebuilds the image to keep it in sync.
+func (d *DevLoop) triggerBackgroundRebuild(svcName string, svc config.Service) {
+	// Cancel any in-flight background build
+	if d.buildCancel != nil {
+		d.buildCancel()
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	d.buildCancel = cancel
+	d.buildCtx = ctx
+
+	go func() {
+		imageName := fmt.Sprintf("%s-%s:latest", d.config.Project.Name, svcName)
+		_, err := d.builder.Build(ctx, builder.BuildOptions{
+			ServiceName: svcName,
+			Service:     svc,
+			ProjectName: d.config.Project.Name,
+			DevMode:     true,
+			Tag:         imageName,
+		})
+		if err != nil && ctx.Err() == nil {
+			d.console.Debug("Background rebuild failed for %s: %s", svcName, err)
+		}
+	}()
+}
+
+// pauseWatchers pauses all file watchers.
+func (d *DevLoop) pauseWatchers() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, w := range d.watchers {
+		w.Pause()
+	}
+}
+
+// resumeWatchers resumes all file watchers.
+func (d *DevLoop) resumeWatchers() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, w := range d.watchers {
+		w.Resume()
+	}
+}
+
 func (d *DevLoop) printDevInfo(services []string) {
 	d.console.Newline()
 
@@ -313,18 +441,60 @@ func (d *DevLoop) streamAllLogs(ctx context.Context, services []string) {
 			defer reader.Close()
 
 			scanner := bufio.NewScanner(reader)
+			lastPanelRedraw := time.Time{}
 			for scanner.Scan() {
 				select {
 				case <-ctx.Done():
 					return
 				default:
 					d.console.ServiceLog(name, scanner.Text())
+
+					// Redraw panel after log output (rate-limited to avoid flicker)
+					if d.panel != nil && d.panel.IsEnabled() && time.Since(lastPanelRedraw) > 200*time.Millisecond {
+						d.panel.Redraw()
+						lastPanelRedraw = time.Now()
+					}
 				}
 			}
 		}(svcName)
 	}
 
 	wg.Wait()
+}
+
+// notifyPanel sends a status message to the intelligence panel.
+func (d *DevLoop) notifyPanel(msg string) {
+	if d.panel != nil {
+		d.panel.SetAction(msg)
+		d.panel.Redraw()
+	}
+}
+
+// pollServiceStats periodically fetches container stats and updates the panel.
+func (d *DevLoop) pollServiceStats(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			labels := map[string]string{"cbox.project": d.config.Project.Name}
+			stats, err := d.runtime.GetContainerStats(ctx, labels)
+			if err != nil {
+				continue
+			}
+			for name, stat := range stats {
+				svcName := strings.TrimPrefix(name, d.config.Project.Name+"_")
+				port := 0
+				if svc, ok := d.config.Services[svcName]; ok {
+					port = svc.GetPrimaryPort()
+				}
+				d.panel.UpdateService(svcName, "Running", stat.Memory, port)
+			}
+			d.panel.Redraw()
+		}
+	}
 }
 
 func (d *DevLoop) stopWatchers() {

@@ -53,10 +53,11 @@ type ContainerConfig struct {
 	NetworkAliases []string
 	Command        []string
 	Labels         map[string]string
-	BindMounts     []BindMount // For dev mode
-	Healthcheck    *HealthcheckConfig
-	Memory         string // Memory limit (Docker format: 512m, 1g)
-	CPUs           string // CPU limit (fractional: "0.5", "2")
+	BindMounts       []BindMount // For dev mode
+	AnonymousVolumes []string    // Anonymous volumes (container-only paths, e.g., /app/node_modules)
+	Healthcheck      *HealthcheckConfig
+	Memory           string // Memory limit (Docker format: 512m, 1g)
+	CPUs             string // CPU limit (fractional: "0.5", "2")
 }
 
 // PortMapping represents a port mapping.
@@ -163,6 +164,11 @@ func (d *Docker) CreateContainer(ctx context.Context, cfg ContainerConfig) (stri
 			mount += ":ro"
 		}
 		args = append(args, "-v", mount)
+	}
+
+	// Anonymous volumes (mask host paths in dev mode)
+	for _, av := range cfg.AnonymousVolumes {
+		args = append(args, "-v", av)
 	}
 
 	// Labels
@@ -688,6 +694,11 @@ func ContainerConfigFromService(
 				HostPath:      svc.Path,
 				ContainerPath: "/app",
 			})
+		}
+		// Isolate dependency directories from host bind mount
+		// Node.js: prevent Mac/Windows node_modules from overwriting Linux ones
+		if svc.Runtime == "nodejs" || svc.Runtime == "node" {
+			cfg.AnonymousVolumes = append(cfg.AnonymousVolumes, "/app/node_modules")
 		}
 	}
 

@@ -16,11 +16,19 @@ type Config struct {
 	Registry     RegistryConfig                `yaml:"registry,omitempty"`
 	Deploy       DeployConfig                  `yaml:"deploy,omitempty"`
 	Environments map[string]EnvironmentConfig  `yaml:"environments,omitempty"`
+	Imports      []ImportConfig                `yaml:"imports,omitempty"`
 }
 
 // ProjectConfig contains project-level settings.
 type ProjectConfig struct {
 	Name string `yaml:"name"` // Defaults to directory name if not set
+}
+
+// ImportConfig defines a cross-project import.
+type ImportConfig struct {
+	Path     string   `yaml:"path"`               // Relative path to the other project
+	Services []string `yaml:"services,omitempty"`  // Specific services to import (empty = all)
+	Prefix   string   `yaml:"prefix,omitempty"`    // Service name prefix (default: directory name)
 }
 
 // Service represents a single service in the stack.
@@ -387,6 +395,19 @@ func (c *Config) DeepCopy() *Config {
 		newCfg.Environments = make(map[string]EnvironmentConfig, len(c.Environments))
 		for k, v := range c.Environments {
 			newCfg.Environments[k] = v
+		}
+	}
+
+	// Copy imports
+	if c.Imports != nil {
+		newCfg.Imports = make([]ImportConfig, len(c.Imports))
+		for i, imp := range c.Imports {
+			impCopy := imp
+			if imp.Services != nil {
+				impCopy.Services = make([]string, len(imp.Services))
+				copy(impCopy.Services, imp.Services)
+			}
+			newCfg.Imports[i] = impCopy
 		}
 	}
 

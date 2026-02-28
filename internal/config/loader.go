@@ -21,6 +21,11 @@ var validate = validator.New()
 
 // Load reads and parses a cbox.yaml file from the given path.
 func Load(path string) (*Config, error) {
+	return loadWithVisited(path, nil)
+}
+
+// loadWithVisited handles recursive loading with cycle detection.
+func loadWithVisited(path string, visited map[string]bool) (*Config, error) {
 	const maxConfigSize = 10 * 1024 * 1024 // 10MB
 
 	file, err := os.Open(path)
@@ -48,7 +53,21 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to read config: %w", err)
 	}
 
-	return Parse(data, filepath.Dir(path))
+	// Resolve to absolute path for cycle detection
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve path: %w", err)
+	}
+
+	if visited == nil {
+		visited = make(map[string]bool)
+	}
+	if visited[absPath] {
+		return nil, fmt.Errorf("circular import detected: %s", path)
+	}
+	visited[absPath] = true
+
+	return parseWithImports(data, filepath.Dir(absPath), visited)
 }
 
 // Parse parses cbox.yaml content and applies defaults.
@@ -88,6 +107,102 @@ func Parse(data []byte, baseDir string) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// parseWithImports parses config and resolves imports.
+func parseWithImports(data []byte, baseDir string, visited map[string]bool) (*Config, error) {
+	cfg, err := Parse(data, baseDir)
+	if err != nil {
+		return nil, err
+	}
+
+	// Process imports
+	if err := processImports(cfg, baseDir, visited); err != nil {
+		return nil, fmt.Errorf("import processing failed: %w", err)
+	}
+
+	return cfg, nil
+}
+
+// processImports loads and merges imported services.
+func processImports(cfg *Config, baseDir string, visited map[string]bool) error {
+	if len(cfg.Imports) == 0 {
+		return nil
+	}
+
+	for _, imp := range cfg.Imports {
+		// Resolve the import path relative to the current config file
+		importPath := imp.Path
+		if !filepath.IsAbs(importPath) {
+			importPath = filepath.Join(baseDir, importPath)
+		}
+
+		// Find the cbox.yaml in the imported project
+		configPath := filepath.Join(importPath, "cbox.yaml")
+
+		// Load the imported config (with cycle detection)
+		importedCfg, err := loadWithVisited(configPath, visited)
+		if err != nil {
+			return fmt.Errorf("failed to import %s: %w", imp.Path, err)
+		}
+
+		// Determine the prefix for service names
+		prefix := imp.Prefix
+		if prefix == "" {
+			prefix = filepath.Base(importPath)
+		}
+
+		// Import services
+		for name, svc := range importedCfg.Services {
+			// Filter by requested services (if specified)
+			if len(imp.Services) > 0 && !containsString(imp.Services, name) {
+				continue
+			}
+
+			// Rebase relative paths to absolute paths based on imported project dir
+			if svc.Path != "" && !filepath.IsAbs(svc.Path) {
+				svc.Path = filepath.Join(importPath, svc.Path)
+			}
+			if svc.EnvFile != "" && !filepath.IsAbs(svc.EnvFile) {
+				svc.EnvFile = filepath.Join(importPath, svc.EnvFile)
+			}
+
+			// Prefix the service name to avoid collisions
+			prefixedName := prefix + "_" + name
+
+			// Update depends_on references to use prefixed names
+			for i, dep := range svc.DependsOn {
+				svc.DependsOn[i] = prefix + "_" + dep
+			}
+
+			// Add to main config
+			if cfg.Services == nil {
+				cfg.Services = make(map[string]Service)
+			}
+			cfg.Services[prefixedName] = svc
+		}
+
+		// Import volumes that the imported services reference
+		for name, vol := range importedCfg.Volumes {
+			if cfg.Volumes == nil {
+				cfg.Volumes = make(map[string]Volume)
+			}
+			prefixedName := prefix + "_" + name
+			cfg.Volumes[prefixedName] = vol
+		}
+	}
+
+	return nil
+}
+
+// containsString checks if a string slice contains a value.
+func containsString(slice []string, val string) bool {
+	for _, s := range slice {
+		if s == val {
+			return true
+		}
+	}
+	return false
 }
 
 // applyDefaults fills in default values for the configuration.
